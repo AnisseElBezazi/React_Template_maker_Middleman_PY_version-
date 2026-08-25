@@ -1,0 +1,916 @@
+// Interface web locale pour la pipeline Design-to-Code : glisser-déposer un
+// PDF, suivi de la génération, puis comparaison PDF cible / preview React
+// live côte à côte.
+//
+// Usage: node server.mjs  (puis ouvrir http://localhost:5050)
+
+import "dotenv/config";
+import { ZipArchive } from "archiver";
+import express from "express";
+import multer from "multer";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { spawnSync } from "child_process";
+import { runPipeline } from "./lib/pipeline.mjs";
+import { applyImageEdits, applyTextEdits, applyClassEdits } from "./apply_image_edits.mjs";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const OUT_ROOT = path.join(__dirname, "out");
+const UPLOADS_ROOT = path.join(__dirname, "uploads");
+const TEMPLATES_ROOT = path.resolve(__dirname, "..", "templates copy");
+fs.mkdirSync(OUT_ROOT, { recursive: true });
+fs.mkdirSync(UPLOADS_ROOT, { recursive: true });
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: UPLOADS_ROOT,
+    filename: (_req, file, cb) => {
+      const ext = file.fieldname === "extraConfig" ? ".json" : ".pdf";
+      cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+    },
+  }),
+});
+const app = express();
+app.use("/out", express.static(OUT_ROOT));
+app.use("/uploads", express.static(UPLOADS_ROOT));
+
+/** @type {Map<string, {status: string, step: string, message: string, log: {step:string,message:string}[], result: any, error: string|null, pdfUrl: string, page: number}>} */
+const runs = new Map();
+
+function toPublicUrl(absPath) {
+  return "/out/" + path.relative(OUT_ROOT, absPath).split(path.sep).join("/");
+}
+
+const PASS_LABELS = {
+  attempt1: "Passe 1 -- premier jet",
+  attempt2: "Passe 2 -- diff visuel",
+  attempt3: "Passe 3 -- audit",
+  final: "Passe 4+5 -- corrections de taille",
+};
+
+/** Les runs vivent en mémoire et disparaissent au redémarrage du serveur,
+ * alors que tous leurs fichiers restent sur le disque. On reconstruit donc
+ * un état minimal à partir du dossier du run, pour pouvoir rouvrir un
+ * ancien résultat (et y retoucher les images) sans relancer de génération
+ * payante. */
+function rehydrateRun(runId) {
+  const outDir = path.join(OUT_ROOT, runId);
+  if (!fs.existsSync(outDir)) return null;
+
+  const meta = (() => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(outDir, "run-meta.json"), "utf-8"));
+    } catch {
+      return {};
+    }
+  })();
+
+  const passes = [];
+  for (const name of ["attempt1", "attempt2", "attempt3", "final"]) {
+    const jsxPath = path.join(outDir, `${name}.jsx`);
+    const pngPath = path.join(outDir, `${name}.png`);
+    if (fs.existsSync(jsxPath) && fs.existsSync(pngPath)) {
+      passes.push({ name, label: PASS_LABELS[name], jsxPath, pngPath, htmlPath: path.join(outDir, `${name}.html`) });
+    }
+  }
+  if (!passes.length) return null;
+
+  // Le PDF d'origine peut avoir été supprimé du dossier uploads ; la capture
+  // cible, elle, vit dans le dossier du run et suffit pour comparer.
+  const target = fs.readdirSync(outDir).find((f) => /^target-\d+\.png$/.test(f));
+  let { width, height } = meta;
+  if ((!width || !height) && target) {
+    const buf = fs.readFileSync(path.join(outDir, target));
+    width = buf.readUInt32BE(16);
+    height = buf.readUInt32BE(20);
+  }
+  const targetUrl = target ? toPublicUrl(path.join(outDir, target)) : null;
+
+  return {
+    status: "done",
+    step: "done",
+    message: "Rechargé depuis le disque.",
+    log: [],
+    error: null,
+    restored: true,
+    pdfUrl: meta.pdfUrl && fs.existsSync(path.join(UPLOADS_ROOT, path.basename(meta.pdfUrl))) ? meta.pdfUrl : null,
+    targetUrl,
+    page: meta.page || 1,
+    result: { outDir, width, height, passes, ...meta.tokens },
+  };
+}
+
+/** Récupère un run, depuis la mémoire ou, à défaut, depuis le disque. */
+function getRun(runId) {
+  return runs.get(runId) || rehydrateRun(runId);
+}
+
+const IMAGE_IMPORT_RE = /@\/images\/cv-templates\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_-]+\.(?:png|jpe?g))/g;
+const COMPONENT_NAME_RE = /export default function (\w+)/;
+
+/** Rassemble tout ce qu'il faut pour utiliser le composant généré ailleurs :
+ * le .jsx final et les vraies images qu'il référence (déjà placées par
+ * lib/pipeline.mjs dans templates copy/images/cv-templates/<slug>/). */
+function collectDownloadAssets(jsxPath) {
+  const jsxCode = fs.readFileSync(jsxPath, "utf-8");
+  const componentName = jsxCode.match(COMPONENT_NAME_RE)?.[1] || "TemplateHtml";
+  const images = [];
+  for (const [, slug, filename] of jsxCode.matchAll(IMAGE_IMPORT_RE)) {
+    const abs = path.join(TEMPLATES_ROOT, "images", "cv-templates", slug, filename);
+    if (fs.existsSync(abs)) images.push({ abs, zipPath: `images/cv-templates/${slug}/${filename}` });
+  }
+  return { jsxCode, componentName, images };
+}
+
+function layout(title, body) {
+  return `<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>${title}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 24px; color: #1a1a1a; background: #f5f6f8; }
+  h1 { font-size: 1.2rem; margin: 0 0 16px; }
+  .badge { display:inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; margin-left: 8px; }
+  .badge.running { background: #fef3c7; color: #92400e; }
+  .badge.done { background: #d1fae5; color: #065f46; }
+  .badge.error { background: #fee2e2; color: #991b1b; }
+
+  .card { max-width: 640px; margin: 0 auto 20px; background: white; border: 1px solid #e5e7eb; border-radius: 14px; padding: 28px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+  .card-title { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #9ca3af; margin: 0 0 14px; }
+
+  #dropzone { border: 2px dashed #d1d5db; border-radius: 12px; padding: 48px 20px; text-align: center; cursor: pointer; transition: all .15s; background: #fafafa; }
+  #dropzone:hover { border-color: #a1a1aa; background: #f9fafb; }
+  #dropzone.drag { border-color: #ea580c; background: #fff7ed; }
+  #dropzone.has-file { border-color: #10b981; background: #ecfdf5; }
+  #dropzone p { color: #6b7280; margin: 0 0 6px; }
+  #dropzone .big { font-size: 1.05rem; color: #1a1a1a; font-weight: 600; margin-bottom: 8px; }
+  #dropzone .filename { color: #065f46; font-weight: 600; }
+
+  .page-field { display: flex; align-items: center; gap: 10px; font-size: 0.85rem; color: #4b5563; margin-top: 18px; }
+  .page-field input[type=number] { width: 56px; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.85rem; }
+
+  .extra-config-block { margin-top: 22px; border-top: 1px solid #f0f1f3; padding-top: 18px; }
+  .extra-config-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .extra-config-label { font-size: 0.85rem; font-weight: 600; color: #1a1a1a; }
+  .extra-config-hint { font-size: 0.75rem; color: #9ca3af; margin: 2px 0 0; }
+  .tabs { display: inline-flex; background: #f3f4f6; border-radius: 8px; padding: 3px; gap: 2px; }
+  .tab-btn { border: none; background: transparent; padding: 6px 14px; font-size: 0.78rem; font-weight: 600; color: #6b7280; border-radius: 6px; cursor: pointer; transition: all .12s; }
+  .tab-btn.active { background: white; color: #1a1a1a; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  #extraConfigDrop { border: 1.5px dashed #d1d5db; border-radius: 10px; padding: 22px 16px; text-align: center; cursor: pointer; font-size: 0.82rem; color: #6b7280; background: #fafafa; transition: all .15s; }
+  #extraConfigDrop:hover { border-color: #a1a1aa; }
+  #extraConfigDrop.drag { border-color: #ea580c; background: #fff7ed; }
+  #extraConfigDrop.has-file { border-color: #10b981; background: #ecfdf5; color: #065f46; font-weight: 600; }
+  #extraConfigText { width: 100%; min-height: 140px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.78rem; padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; resize: vertical; color: #1a1a1a; background: #fafafa; }
+  #extraConfigText:focus { outline: none; border-color: #a1a1aa; background: white; }
+  #extraConfigStatus { font-size: 0.75rem; margin-top: 6px; min-height: 14px; }
+  #extraConfigStatus.ok { color: #059669; }
+  #extraConfigStatus.err { color: #dc2626; }
+
+  .submit-row { margin-top: 22px; }
+  #submitBtn { width: 100%; padding: 12px; border: none; border-radius: 10px; background: #111827; color: white; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: background .12s; }
+  #submitBtn:hover { background: #1f2937; }
+  #submitBtn:disabled { background: #d1d5db; cursor: not-allowed; }
+
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  .pane { background: white; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+  .pane h2 { font-size: 0.8rem; margin: 0; padding: 8px 12px; background: #f3f4f6; border-bottom: 1px solid #e5e7eb; }
+  .pane embed { width: 100%; height: 80vh; border: none; display: block; }
+  .pane .scale-wrap { width: 100%; max-height: 80vh; overflow-y: auto; overflow-x: hidden; }
+  .pane .scale-wrap iframe { border: none; display: block; transform-origin: top left; }
+  .edit-btn { float: right; margin-left: 8px; padding: 3px 10px; font-size: 0.72rem; font-weight: 600; border: 1px solid #d1d5db;
+              background: white; border-radius: 6px; cursor: pointer; }
+  .edit-btn:hover { background: #f9fafb; }
+  .edit-btn.active { background: #eef2ff; border-color: #6366f1; color: #4338ca; }
+  .edit-btn.save { background: #111827; color: white; border-color: #111827; }
+  .edit-btn.save:disabled { background: #9ca3af; border-color: #9ca3af; cursor: not-allowed; }
+  #editSidebar { position: fixed; top: 0; right: 0; width: 250px; height: 100vh; background: #fff;
+    border-left: 1px solid #e5e7eb; box-shadow: -2px 0 12px rgba(0,0,0,0.06); padding: 20px 18px;
+    display: none; flex-direction: column; gap: 16px; z-index: 50; overflow-y: auto; }
+  #editSidebar.open { display: flex; }
+  #editSidebar h3 { margin: 0; font-size: 0.85rem; }
+  #editSidebar .sb-label { font-size: 0.65rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .05em; color: #9ca3af; margin: 0 0 6px; }
+  #editSidebar .sb-box { background: #f9fafb; border: 1px solid #f0f1f3; border-radius: 8px; padding: 10px 12px; }
+  #editSidebar .sb-row { display: flex; justify-content: space-between; font-size: 0.76rem;
+    color: #374151; line-height: 1.8; font-variant-numeric: tabular-nums; }
+  #editSidebar .sb-row span:first-child { color: #9ca3af; }
+  #editSidebar kbd { background: #f3f4f6; border: 1px solid #e5e7eb; border-bottom-width: 2px;
+    border-radius: 4px; padding: 1px 5px; font-size: 0.68rem; font-family: inherit; color: #374151; }
+  #editSidebar .sb-keys { font-size: 0.72rem; color: #6b7280; line-height: 2.1; }
+  #editSidebar .sb-actions { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+  #editSidebar .sb-btn { width: 100%; padding: 9px; border-radius: 8px; font-size: 0.8rem;
+    font-weight: 600; cursor: pointer; border: 1px solid #d1d5db; background: #fff; }
+  #editSidebar .sb-btn.primary { background: #111827; color: #fff; border-color: #111827; }
+  #editSidebar .sb-btn.primary:disabled { background: #d1d5db; border-color: #d1d5db; cursor: not-allowed; }
+  #editSidebar .sb-status { font-size: 0.72rem; color: #6b7280; text-align: center; }
+  #editSidebar .mode-btn.active { background: #eef2ff; border-color: #6366f1; color: #4338ca; }
+  #editSidebar .pad-in { width: 68px; padding: 2px 6px; border: 1px solid #d1d5db; border-radius: 5px;
+    font-size: 0.74rem; text-align: right; font-variant-numeric: tabular-nums; }
+  body.editing-open { padding-right: 274px; }
+  /* En mode édition, on ne peut agir QUE sur ce panneau : sans repère, on
+     essaie naturellement sur le PDF de gauche, où rien ne réagit. */
+  #previewPane.editing { outline: 3px solid #6366f1; outline-offset: 2px; }
+  #previewPane.editing h2 { background: #eef2ff; }
+  .compare .pane { position: relative; }
+  .compare.editing .pane:first-child { opacity: .45; filter: grayscale(.4); }
+  .muted { color: #6b7280; font-size: 0.82rem; }
+  .log { background: #111827; color: #d1d5db; font-family: monospace; font-size: 0.78rem; padding: 12px; border-radius: 6px; max-height: 160px; overflow-y: auto; white-space: pre-wrap; margin-top: 16px; }
+  a.pass-link { font-size: 0.78rem; margin-right: 12px; }
+  .top { max-width: 1100px; margin: 0 auto 16px; }
+</style></head>
+<body><div class="top">${body}</div></body></html>`;
+}
+
+app.get("/", (_req, res) => {
+  res.send(layout("Pipeline Design-to-Code", `
+    <h1>Pipeline Design-to-Code -- CV Smart</h1>
+    ${(() => {
+      // Runs déjà terminés, relisibles depuis le disque : permet de rouvrir
+      // un résultat et d'y retoucher les images sans relancer de génération.
+      // Les identifiants commencent par un horodatage, donc l'ordre inverse
+      // met bien le plus récent en premier.
+      const past = fs.existsSync(OUT_ROOT)
+        ? fs.readdirSync(OUT_ROOT)
+            .filter((d) => fs.existsSync(path.join(OUT_ROOT, d, "attempt1.jsx")))
+            .sort()
+            .reverse()
+            .slice(0, 12)
+        : [];
+      if (!past.length) return "";
+      const when = (d) => {
+        const ts = parseInt(d.split("-")[0], 10);
+        if (!Number.isFinite(ts)) return "";
+        return new Date(ts).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+      };
+      return `<div class="card">
+        <p class="card-title">Runs précédents (plus récent en premier)</p>
+        <ul style="margin:0;padding-left:0;list-style:none;font-size:0.82rem;line-height:2;color:#4b5563">
+          ${past.map((d, i) => `<li>
+            <a href="/runs/${d}" style="text-decoration:none">
+              <b style="color:#111827">${when(d)}</b>
+              <span style="color:#9ca3af;margin-left:8px">${d}</span>
+              ${i === 0 ? `<span class="badge done" style="margin-left:6px">dernier</span>` : ""}
+            </a>
+          </li>`).join("")}
+        </ul>
+      </div>`;
+    })()}
+    <form id="uploadForm" action="/run" method="post" enctype="multipart/form-data">
+      <div class="card">
+        <p class="card-title">1. PDF source</p>
+        <div id="dropzone">
+          <p class="big">Glisse un PDF ici</p>
+          <p>ou clique pour en choisir un</p>
+          <input type="file" name="pdf" accept="application/pdf" id="fileInput" hidden>
+        </div>
+        <div class="page-field">
+          Page à traiter <input type="number" name="page" id="pageInput" value="1" min="1">
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="extra-config-header">
+          <div>
+            <p class="extra-config-label">2. extra_config (optionnel)</p>
+            <p class="extra-config-hint">Schéma réel du template (CvParserConfig) -- sinon un schéma générique est utilisé.</p>
+          </div>
+          <div class="tabs">
+            <button type="button" class="tab-btn active" data-tab="file">Fichier</button>
+            <button type="button" class="tab-btn" data-tab="paste">Coller le JSON</button>
+          </div>
+        </div>
+
+        <div class="tab-panel active" data-panel="file">
+          <div id="extraConfigDrop">
+            <span id="extraConfigDropLabel">Glisse un fichier .json ici ou clique pour en choisir un</span>
+            <input type="file" name="extraConfig" accept="application/json,.json" id="extraConfigInput" hidden>
+          </div>
+        </div>
+        <div class="tab-panel" data-panel="paste">
+          <textarea id="extraConfigText" placeholder='{ "frontend_cvparser_config": [ ... ] }'></textarea>
+          <div id="extraConfigStatus"></div>
+        </div>
+      </div>
+
+      <div class="submit-row">
+        <button type="submit" id="submitBtn" disabled>Choisis d'abord un PDF</button>
+      </div>
+      <input type="hidden" name="extraConfigText" id="extraConfigTextHidden">
+    </form>
+    <script>
+      const dz = document.getElementById('dropzone');
+      const input = document.getElementById('fileInput');
+      const form = document.getElementById('uploadForm');
+      const submitBtn = document.getElementById('submitBtn');
+
+      function setPdf(file) {
+        if (!file) return;
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        input.files = dt.files;
+        dz.classList.add('has-file');
+        dz.querySelector('.big').textContent = file.name;
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Lancer la génération';
+      }
+      dz.addEventListener('click', () => input.click());
+      dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('drag'); });
+      dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
+      dz.addEventListener('drop', (e) => {
+        e.preventDefault(); dz.classList.remove('drag');
+        if (e.dataTransfer.files.length) setPdf(e.dataTransfer.files[0]);
+      });
+      input.addEventListener('change', () => { if (input.files.length) setPdf(input.files[0]); });
+
+      // Onglets fichier / coller pour l'extra_config
+      const tabBtns = document.querySelectorAll('.tab-btn');
+      const panels = document.querySelectorAll('.tab-panel');
+      tabBtns.forEach((btn) => btn.addEventListener('click', () => {
+        tabBtns.forEach((b) => b.classList.remove('active'));
+        panels.forEach((p) => p.classList.remove('active'));
+        btn.classList.add('active');
+        document.querySelector('.tab-panel[data-panel="' + btn.dataset.tab + '"]').classList.add('active');
+      }));
+
+      // extra_config par fichier
+      const ecDrop = document.getElementById('extraConfigDrop');
+      const ecInput = document.getElementById('extraConfigInput');
+      const ecLabel = document.getElementById('extraConfigDropLabel');
+      function setExtraConfigFile(file) {
+        if (!file) return;
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        ecInput.files = dt.files;
+        ecDrop.classList.add('has-file');
+        ecLabel.textContent = file.name;
+      }
+      ecDrop.addEventListener('click', () => ecInput.click());
+      ecDrop.addEventListener('dragover', (e) => { e.preventDefault(); ecDrop.classList.add('drag'); });
+      ecDrop.addEventListener('dragleave', () => ecDrop.classList.remove('drag'));
+      ecDrop.addEventListener('drop', (e) => {
+        e.preventDefault(); ecDrop.classList.remove('drag');
+        if (e.dataTransfer.files.length) setExtraConfigFile(e.dataTransfer.files[0]);
+      });
+      ecInput.addEventListener('change', () => { if (ecInput.files.length) setExtraConfigFile(ecInput.files[0]); });
+
+      // extra_config collé en texte -- validation JSON en direct + recopie dans le champ caché envoyé au serveur
+      const ecText = document.getElementById('extraConfigText');
+      const ecTextHidden = document.getElementById('extraConfigTextHidden');
+      const ecStatus = document.getElementById('extraConfigStatus');
+      ecText.addEventListener('input', () => {
+        const val = ecText.value.trim();
+        ecTextHidden.value = val;
+        if (!val) { ecStatus.textContent = ''; ecStatus.className = ''; return; }
+        try {
+          JSON.parse(val);
+          ecStatus.textContent = 'JSON valide';
+          ecStatus.className = 'ok';
+        } catch (e) {
+          ecStatus.textContent = 'JSON invalide : ' + e.message;
+          ecStatus.className = 'err';
+        }
+      });
+
+      form.addEventListener('submit', (e) => {
+        if (ecText.value.trim()) {
+          try { JSON.parse(ecText.value.trim()); }
+          catch { e.preventDefault(); ecStatus.textContent = 'Corrige le JSON avant de lancer.'; ecStatus.className = 'err'; }
+        }
+      });
+    </script>
+  `));
+});
+
+app.post("/run", upload.fields([{ name: "pdf", maxCount: 1 }, { name: "extraConfig", maxCount: 1 }]), (req, res) => {
+  const pdfFile = req.files?.pdf?.[0];
+  if (!pdfFile) return res.status(400).send("PDF manquant.");
+  const extraConfigFile = req.files?.extraConfig?.[0];
+  const pageNumber = parseInt(req.body.page || "1", 10);
+
+  // extra_config peut venir soit d'un fichier uploadé, soit de JSON collé
+  // dans le textarea (envoyé dans le champ caché extraConfigText) -- dans
+  // ce 2e cas on l'écrit dans un fichier temporaire pour réutiliser
+  // exactement le même chemin (extraConfigPath) côté runPipeline.
+  let extraConfigPath = extraConfigFile?.path;
+  const extraConfigText = (req.body.extraConfigText || "").trim();
+  if (!extraConfigPath && extraConfigText) {
+    try {
+      JSON.parse(extraConfigText);
+    } catch (err) {
+      return res.status(400).send(`extra_config collé n'est pas un JSON valide : ${err.message}`);
+    }
+    extraConfigPath = path.join(UPLOADS_ROOT, `${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+    fs.writeFileSync(extraConfigPath, extraConfigText);
+  }
+
+  const runId = Date.now() + "-" + Math.random().toString(36).slice(2, 7);
+  const outDir = path.join(OUT_ROOT, runId);
+  const state = {
+    status: "running", step: "extract", message: "Démarrage...", log: [],
+    stream: { step: null, kind: null, text: "" },
+    result: null, error: null, pdfUrl: "/uploads/" + path.basename(pdfFile.path), page: pageNumber,
+  };
+  runs.set(runId, state);
+
+  runPipeline({
+    pdfPath: pdfFile.path,
+    pageNumber,
+    extraConfigPath,
+    outDir,
+    onProgress: (step, message) => {
+      state.step = step;
+      state.message = message;
+      state.log.push({ step, message });
+    },
+    onStream: (step, kind, text) => {
+      state.stream = { step, kind, text };
+    },
+  })
+    .then((result) => {
+      state.status = "done";
+      state.result = result;
+      // Trace sur disque : permet de rouvrir ce run après un redémarrage du
+      // serveur (les runs ne vivent qu'en mémoire autrement).
+      try {
+        fs.writeFileSync(
+          path.join(outDir, "run-meta.json"),
+          JSON.stringify({
+            pdfUrl: state.pdfUrl,
+            page: state.page,
+            width: result.width,
+            height: result.height,
+            finishedAt: new Date().toISOString(),
+            tokens: {
+              totalInputTokens: result.totalInputTokens,
+              totalOutputTokens: result.totalOutputTokens,
+              totalCacheReadTokens: result.totalCacheReadTokens,
+              totalCacheWriteTokens: result.totalCacheWriteTokens,
+            },
+          }, null, 2)
+        );
+      } catch { /* la trace est un confort, pas un prérequis */ }
+    })
+    .catch((err) => { state.status = "error"; state.error = err.message; });
+
+  res.redirect(303, `/runs/${runId}`);
+});
+
+/** Re-rend la dernière passe telle quelle (aucun appel Claude). Sert aux
+ * runs générés avant l'ajout des repères `data-cvimg` : sans eux, l'éditeur
+ * ne peut relier une image du rendu à sa balise dans le JSX. */
+app.post("/runs/:id/rerender", (req, res) => {
+  const state = getRun(req.params.id);
+  if (!state || state.status !== "done") return res.status(404).send("Run introuvable ou pas terminé.");
+  const finalPass = state.result.passes.at(-1);
+  const runCvData = path.join(state.result.outDir, "generated_cvdata.json");
+  const cvDataPath = fs.existsSync(runCvData) ? runCvData : path.join(__dirname, "sample_cvdata.json");
+  const r = spawnSync(
+    "node",
+    [path.join(__dirname, "render.mjs"), finalPass.jsxPath, cvDataPath,
+      finalPass.pngPath, String(state.result.width), String(state.result.height)],
+    { encoding: "utf-8", cwd: __dirname }
+  );
+  if (r.status !== 0) return res.status(500).send(`Rendu échoué: ${r.stderr || r.stdout}`);
+  res.json({ ok: true });
+});
+
+app.get("/editor-overlay.js", (_req, res) => {
+  // Jamais de cache : ce script évolue souvent, et une version périmée
+  // servie depuis le cache du navigateur donne un éditeur qui "ne marche
+  // pas" alors que le correctif est bien sur le disque.
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.type("application/javascript").sendFile(path.join(__dirname, "editor_overlay.js"));
+});
+
+/** Applique dans le JSX les ajustements d'images faits à la souris, puis
+ * re-rend. Le résultat écrase le .jsx de la dernière passe pour que le
+ * téléchargement et la preview repartent du code corrigé. */
+app.post("/runs/:id/image-edits", express.json({ limit: "1mb" }), (req, res) => {
+  const state = getRun(req.params.id);
+  if (!state || state.status !== "done") return res.status(404).send("Run introuvable ou pas terminé.");
+  const edits = req.body?.edits || {};
+  const textEdits = req.body?.textEdits || {};
+  const classEdits = req.body?.classEdits || {};
+  if (!Object.keys(edits).length && !Object.keys(textEdits).length && !Object.keys(classEdits).length)
+    return res.status(400).send("Aucun ajustement reçu.");
+
+  const finalPass = state.result.passes.at(-1);
+  try {
+    const imgPass = applyImageEdits(fs.readFileSync(finalPass.jsxPath, "utf-8"), edits);
+    const textPass = applyTextEdits(imgPass.source, textEdits);
+    const classPass = applyClassEdits(textPass.source, classEdits);
+    const applied = [...imgPass.applied, ...textPass.applied, ...classPass.applied];
+    if (!applied.length) return res.status(400).send("Aucune balise correspondante trouvée dans le JSX.");
+    fs.writeFileSync(finalPass.jsxPath, classPass.source);
+
+    // Mêmes données que le run d'origine : si un extra_config a été fourni,
+    // le JSON dérivé de ce schéma est dans le dossier du run -- rendre avec
+    // le schéma générique afficherait d'autres champs que ceux que
+    // l'utilisateur vient d'ajuster à l'écran.
+    const runCvData = path.join(state.result.outDir, "generated_cvdata.json");
+    const cvDataPath = fs.existsSync(runCvData) ? runCvData : path.join(__dirname, "sample_cvdata.json");
+    const r = spawnSync(
+      "node",
+      [path.join(__dirname, "render.mjs"), finalPass.jsxPath, cvDataPath,
+        finalPass.pngPath, String(state.result.width), String(state.result.height)],
+      { encoding: "utf-8", cwd: __dirname }
+    );
+    if (r.status !== 0) return res.status(500).send(`Rendu échoué: ${r.stderr || r.stdout}`);
+    res.json({ ok: true, applied });
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
+app.get("/runs/:id/status.json", (req, res) => {
+  const state = getRun(req.params.id);
+  if (!state) return res.status(404).json({ error: "run introuvable" });
+  res.json({ status: state.status, step: state.step, message: state.message, log: state.log, stream: state.stream, error: state.error });
+});
+
+app.get("/runs/:id/download", (req, res) => {
+  const state = getRun(req.params.id);
+  if (!state || state.status !== "done") return res.status(404).send("Run introuvable ou pas terminé.");
+
+  const finalPass = state.result.passes.at(-1);
+  const { jsxCode, componentName, images } = collectDownloadAssets(finalPass.jsxPath);
+
+  const readme = `Composant généré par la pipeline Design-to-Code -- run ${req.params.id}, page ${state.page}.
+
+Contenu :
+- ${componentName}.jsx -- le composant React
+- images/cv-templates/.../*.png -- les vraies images extraites du PDF source, référencées par le composant
+
+Ce qui n'est PAS inclus / à vérifier avant intégration :
+- Le fichier CSS que le composant importe (ex: xxxSmartCv.css) n'existe pas ici -- il n'a jamais été généré, son import est vide dans ce test. Vérifie s'il faut en écrire un (l'exemple Visian en a un, avec quelques classes custom hors Tailwind).
+- Les imports du moteur (@/components/CvSmart/templates/engine/...) et du schéma cvData supposent que ce composant vit dans le même projet que templates copy/ -- adapte les chemins si tu le déplaces ailleurs.
+- Ce composant n'a été testé que dans le harness de test de la pipeline (React seul + données factices), pas dans l'app CV Smart réelle.
+`;
+
+  res.attachment(`${componentName}.zip`);
+  const archive = new ZipArchive({ zlib: { level: 9 } });
+  archive.on("error", (err) => res.status(500).end(String(err)));
+  archive.pipe(res);
+  archive.append(jsxCode, { name: `${componentName}.jsx` });
+  archive.append(readme, { name: "README.txt" });
+  for (const img of images) archive.file(img.abs, { name: img.zipPath });
+  archive.finalize();
+});
+
+app.get("/runs/:id", (req, res) => {
+  const state = getRun(req.params.id);
+  if (!state) return res.status(404).send("Run introuvable.");
+
+  const header = `<h1>Run <span class="muted">${req.params.id}</span><span class="badge ${state.status}">${state.status}</span></h1>`;
+
+  if (state.status !== "done" && state.status !== "error") {
+    return res.send(layout("Run en cours", `${header}
+      <div id="live"><p class="muted">Étape : <b>${state.step}</b> -- ${state.message}</p></div>
+      <div class="log" id="logbox"></div>
+      <div id="streambox-wrap" style="display:none">
+        <p class="muted" id="streambox-label" style="margin:12px 0 4px"></p>
+        <pre class="log" id="streambox" style="max-height:280px"></pre>
+      </div>
+      <script>
+        async function poll() {
+          const r = await fetch('/runs/${req.params.id}/status.json');
+          const s = await r.json();
+          document.getElementById('live').innerHTML = '<p class="muted">Étape : <b>' + s.step + '</b> -- ' + s.message + '</p>';
+          document.getElementById('logbox').textContent = s.log.map(l => '[' + l.step + '] ' + l.message).join('\\n');
+          if (s.stream && s.stream.text) {
+            const wrap = document.getElementById('streambox-wrap');
+            const box = document.getElementById('streambox');
+            const label = document.getElementById('streambox-label');
+            wrap.style.display = 'block';
+            label.textContent = (s.stream.kind === 'thinking' ? '\u{1F9E0} Réflexion (' : '✍️ Écriture (') + s.stream.step + ')...';
+            const wasAtBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+            box.textContent = s.stream.text;
+            if (wasAtBottom) box.scrollTop = box.scrollHeight;
+          }
+          if (s.status === 'done' || s.status === 'error') { location.reload(); return; }
+          setTimeout(poll, 1000);
+        }
+        poll();
+      </script>`));
+  }
+
+  if (state.status === "error") {
+    return res.send(layout("Erreur", `${header}<p style="color:#991b1b">${state.error}</p><p><a href="/">&larr; Réessayer</a></p>`));
+  }
+
+  const { result } = state;
+  // La capture cible sert de calque de décalque ; pour un run encore en
+  // mémoire elle n'est pas dans l'état, on la retrouve sur le disque.
+  const targetForOnion = state.targetUrl || (() => {
+    try {
+      const f = fs.readdirSync(result.outDir).find((n) => /^target-\d+\.png$/.test(n));
+      return f ? toPublicUrl(path.join(result.outDir, f)) : null;
+    } catch { return null; }
+  })();
+  const finalPass = result.passes.at(-1);
+  const otherPasses = result.passes.slice(0, -1);
+
+  res.send(layout("Résultat", `${header}
+    <p class="muted">
+      ${state.pdfUrl ? `PDF cible (page ${state.page})` : `Capture cible (page ${state.page})`} vs. preview React live du composant généré.
+      ${result.totalInputTokens != null
+        ? `Tokens : ${result.totalInputTokens} in / ${result.totalOutputTokens} out${
+            result.totalCacheReadTokens || result.totalCacheWriteTokens
+              ? ` (cache: ${result.totalCacheWriteTokens} écrits / ${result.totalCacheReadTokens} lus)`
+              : ""
+          }.`
+        : `<span class="badge done">rechargé du disque</span>`}
+      ${otherPasses.map((p) => `<a class="pass-link" href="${toPublicUrl(p.htmlPath)}" target="_blank">${p.label} &rarr;</a>`).join("")}
+      <a class="pass-link" href="/runs/${req.params.id}/download"><b>Télécharger le .jsx + images &darr;</b></a>
+    </p>
+    <div class="compare">
+      <div class="pane">
+        <h2>${state.pdfUrl ? "PDF cible" : "Capture cible"}</h2>
+        ${state.pdfUrl
+          ? `<embed src="${state.pdfUrl}#page=${state.page}" type="application/pdf">`
+          : state.targetUrl
+            ? `<div class="scale-wrap"><img src="${state.targetUrl}" style="width:100%;display:block"></div>`
+            : `<p class="muted" style="padding:12px">Cible indisponible.</p>`}
+      </div>
+      <div class="pane" id="previewPane">
+        <h2>
+          ${finalPass.label} (live) -- même échelle que le PDF cible
+          <button type="button" id="editToggle" class="edit-btn">✏️ Ajuster les images</button>
+        </h2>
+        <div class="scale-wrap" id="scaleWrap">
+          <div id="scaleInner">
+            <iframe id="scaleFrame" src="${toPublicUrl(finalPass.htmlPath)}" width="${result.width}" height="${result.height}"></iframe>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="editSidebar">
+      <h3>Ajuster les images</h3>
+      <div>
+        <p class="sb-label">Sélection</p>
+        <div class="sb-box" id="sbSel"><div class="sb-row"><span>Aucune</span></div></div>
+      </div>
+      ${targetForOnion ? `<div>
+        <p class="sb-label">Calque de la cible</p>
+        <div class="sb-box">
+          <label class="sb-row" style="cursor:pointer">
+            <span style="color:#374151">Superposer</span>
+            <input type="checkbox" id="onionOn">
+          </label>
+          <input type="range" id="onionOpacity" min="0" max="100" value="45" style="width:100%;margin-top:6px">
+          <div class="sb-row"><span>Opacité</span><span id="onionVal">45 %</span></div>
+        </div>
+      </div>` : ''}
+      <div id="sbSpacing" style="display:none">
+        <p class="sb-label">Espacement</p>
+        <div class="sb-box">
+          <div style="display:flex;gap:4px;margin-bottom:8px">
+            <button type="button" class="sb-btn mode-btn active" data-mode="padding" style="padding:5px;font-size:0.7rem">Intérieur (P)</button>
+            <button type="button" class="sb-btn mode-btn" data-mode="margin" style="padding:5px;font-size:0.7rem">Extérieur (M)</button>
+          </div>
+          <div class="sb-row"><span>Haut</span><input type="number" step="0.1" class="pad-in" data-side="n"></div>
+          <div class="sb-row"><span>Droite</span><input type="number" step="0.1" class="pad-in" data-side="e"></div>
+          <div class="sb-row"><span>Bas</span><input type="number" step="0.1" class="pad-in" data-side="s"></div>
+          <div class="sb-row"><span>Gauche</span><input type="number" step="0.1" class="pad-in" data-side="w"></div>
+        </div>
+      </div>
+      <div>
+        <p class="sb-label">Raccourcis</p>
+        <div class="sb-keys">
+          <kbd>glisser</kbd> déplacer<br>
+          <kbd>poignées</kbd> redimensionner<br>
+          <kbd>Maj</kbd> + poignée : centre fixe<br>
+          <kbd>←↑↓→</kbd> 1 px &nbsp; <kbd>Maj</kbd>+flèches 10 px<br>
+          <kbd>P</kbd> marge intérieure &nbsp; <kbd>M</kbd> extérieure<br>
+          <kbd>Ctrl</kbd>+<kbd>Z</kbd> annuler &nbsp; <kbd>Ctrl</kbd>+<kbd>Y</kbd> rétablir<br>
+          <kbd>Échap</kbd> désélectionner
+        </div>
+      </div>
+      <div class="sb-actions">
+        <p class="sb-status" id="sbStatus">Aucune modification</p>
+        <button type="button" id="editSave" class="sb-btn primary" disabled>Enregistrer</button>
+        <button type="button" id="editCancel" class="sb-btn">Annuler et quitter</button>
+      </div>
+    </div>
+    <p><a href="/">&larr; Nouveau run</a></p>
+    <script>
+      // Un <embed type="application/pdf"> réduit automatiquement toute la
+      // page à sa boîte ; un <iframe> affiche le contenu à sa taille native
+      // (${result.width}x${result.height}px) sans se réduire tout seul.
+      // Sans ça, comparer les deux donne une fausse impression de tailles
+      // différentes alors que les deux rendus sont en fait à la même échelle
+      // (vérifié en comparant les pixels des captures) -- on force donc le
+      // même comportement "ajuster à la largeur" ici. transform ne change
+      // pas la boîte de mise en page -- #scaleInner reçoit donc la taille
+      // réduite explicitement pour que le scroll du parent soit juste.
+      function rescale() {
+        const wrap = document.getElementById('scaleWrap');
+        const inner = document.getElementById('scaleInner');
+        const frame = document.getElementById('scaleFrame');
+        const scale = wrap.clientWidth / ${result.width};
+        frame.style.transform = 'scale(' + scale + ')';
+        inner.style.width = (${result.width} * scale) + 'px';
+        inner.style.height = (${result.height} * scale) + 'px';
+        inner.style.overflow = 'hidden';
+      }
+      window.addEventListener('resize', rescale);
+      rescale();
+
+      // --- Éditeur visuel des images (type Figma) ---
+      // L'iframe est servie par ce même serveur, donc même origine : on peut
+      // injecter le script d'édition dans son document et récupérer les
+      // ajustements par postMessage.
+      let currentEdits = null;
+      const toggle = document.getElementById('editToggle');
+      const saveBtn = document.getElementById('editSave');
+      const sidebar = document.getElementById('editSidebar');
+      const sbSel = document.getElementById('sbSel');
+      const cancelBtn = document.getElementById('editCancel');
+      // Le statut du panneau latéral remplace l'ancien texte surimprimé sur
+      // la preview.
+      const hint = document.getElementById('sbStatus');
+      let editing = false;
+
+      // Tout le corps est enveloppé : une exception dans un gestionnaire
+      // async disparaît silencieusement, et l'utilisateur voit juste un
+      // bouton qui "ne fait rien". On affiche donc l'erreur.
+      toggle.addEventListener('click', async () => {
+       try {
+        const frame = document.getElementById('scaleFrame');
+        if (editing) {
+          editing = false;
+          toggle.textContent = '✏️ Ajuster les images';
+          toggle.classList.remove('active');
+          frame.contentWindow.postMessage({ type: 'cv-deselect' }, '*');
+          frame.src = frame.src; // recharge : annule les ajustements non enregistrés
+          hint.textContent = '';
+          currentEdits = null;
+          document.getElementById('previewPane').classList.remove('editing');
+          document.querySelector('.compare').classList.remove('editing');
+          sidebar.classList.remove('open');
+          document.body.classList.remove('editing-open');
+          sbSel.innerHTML = '<div class="sb-row"><span>Aucune</span></div>';
+          saveBtn.disabled = true;
+          return;
+        }
+        editing = true;
+        toggle.textContent = '✕ Quitter l\\'édition';
+        toggle.classList.add('active');
+        document.getElementById('previewPane').classList.add('editing');
+        document.querySelector('.compare').classList.add('editing');
+        sidebar.classList.add('open');
+        document.body.classList.add('editing-open');
+
+        // Les runs générés avant l'ajout des repères data-cvimg n'ont pas
+        // d'images identifiables : on re-rend une fois (local, gratuit).
+        // Un rendu produit avant l'ajout d'un type de repère laisserait
+        // l'édition correspondante indisponible sans le dire : on compare
+        // donc la version du schéma d'étiquetage plutôt que la présence
+        // d'un attribut particulier.
+        const tagsMeta = frame.contentDocument.querySelector('meta[name="cv-tags"]');
+        if (!tagsMeta || tagsMeta.content !== '3') {
+          hint.textContent = 'Préparation de l\\'éditeur...';
+          const rr = await fetch('/runs/${req.params.id}/rerender', { method: 'POST' });
+          if (!rr.ok) { hint.textContent = 'Préparation échouée : ' + (await rr.text()); return; }
+          await new Promise((resolve) => {
+            frame.addEventListener('load', resolve, { once: true });
+            frame.src = frame.src.split('?')[0] + '?t=' + Date.now();
+          });
+        }
+        // Injecté comme code inline (et non via src) : pas de cache
+        // navigateur possible, exécution immédiate, et une erreur de
+        // chargement devient visible au lieu d'échouer en silence.
+        const code = await (await fetch('/editor-overlay.js?t=' + Date.now())).text();
+        const s = frame.contentDocument.createElement('script');
+        s.textContent = code;
+        frame.contentDocument.body.appendChild(s);
+
+        setTimeout(() => {
+          if (editing && !hint.textContent.includes('image(s)')) {
+            hint.textContent = "L'éditeur ne s'est pas initialisé — regarde la console du navigateur.";
+          }
+        }, 2000);
+       } catch (err) {
+         hint.textContent = 'Erreur : ' + err.message;
+         console.error(err);
+       }
+      });
+
+      window.addEventListener('message', async (e) => {
+        if (!e.data) return;
+        if (e.data.type === 'cv-editor-ready') {
+          hint.textContent = e.data.count + ' image(s) éditable(s)';
+          pushOnion();
+        }
+        if (e.data.type === 'cv-select') {
+          const sel = e.data.sel;
+          const spacingBox = document.getElementById('sbSpacing');
+          if (!sel) {
+            sbSel.innerHTML = '<div class="sb-row"><span>Aucune</span></div>';
+            spacingBox.style.display = 'none';
+          } else if (sel.kind === 'text') {
+            sbSel.innerHTML = '<div class="sb-row"><span>Texte</span><span>#' + sel.id + '</span></div>'
+              + '<div class="sb-row"><span>Contenu</span><span>' + (sel.label || '—') + '</span></div>'
+              + (sel.instances > 1 ? '<div class="sb-row"><span>Instances</span><span>' + sel.instances + '</span></div>' : '');
+            spacingBox.style.display = 'block';
+            for (const inp of document.querySelectorAll('.pad-in')) inp.value = sel[inp.dataset.side];
+            for (const btn of document.querySelectorAll('.mode-btn')) {
+              btn.classList.toggle('active', btn.dataset.mode === sel.mode);
+            }
+          } else {
+            sbSel.innerHTML = '<div class="sb-row"><span>Image</span><span>#' + sel.id + '</span></div>'
+              + '<div class="sb-row"><span>Largeur</span><span>' + sel.width + ' em</span></div>'
+              + '<div class="sb-row"><span>Hauteur</span><span>' + sel.height + ' em</span></div>'
+              + '<div class="sb-row"><span>X</span><span>' + sel.left + ' em</span></div>'
+              + '<div class="sb-row"><span>Y</span><span>' + sel.top + ' em</span></div>';
+            spacingBox.style.display = 'none';
+          }
+        }
+        if (e.data.type === 'cv-edits') {
+          currentEdits = { images: e.data.edits, texts: e.data.textEdits || {}, classes: e.data.classEdits || {} };
+          const n = Object.keys(currentEdits.images).length + Object.keys(currentEdits.texts).length
+            + Object.keys(currentEdits.classes).length;
+          // Après une annulation on peut revenir à zéro modification :
+          // le bouton doit alors se désactiver, pas rester actif à vide.
+          saveBtn.disabled = n === 0;
+          hint.textContent = n ? n + ' image(s) modifiée(s)' : 'Aucune modification';
+        }
+      });
+
+      // Les raccourcis frappés alors que le focus est sur la page parente
+      // (juste après un clic sur un bouton, par exemple) sont relayés à
+      // l'iframe, qui détient l'historique.
+      document.addEventListener('keydown', (e) => {
+        if (!editing) return;
+        const mod = e.ctrlKey || e.metaKey;
+        if (!mod) return;
+        const frame = document.getElementById('scaleFrame');
+        const k = e.key.toLowerCase();
+        if (k === 'z') {
+          e.preventDefault();
+          frame.contentWindow.postMessage({ type: e.shiftKey ? 'cv-redo' : 'cv-undo' }, '*');
+        } else if (k === 'y') {
+          e.preventDefault();
+          frame.contentWindow.postMessage({ type: 'cv-redo' }, '*');
+        }
+      });
+
+      saveBtn.addEventListener('click', async () => {
+        if (!currentEdits) return;
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Enregistrement...';
+        const r = await fetch('/runs/${req.params.id}/image-edits', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ edits: currentEdits.images, textEdits: currentEdits.texts, classEdits: currentEdits.classes }),
+        });
+        if (r.ok) { location.reload(); }
+        else { saveBtn.disabled = false; saveBtn.textContent = 'Enregistrer'; hint.textContent = 'Échec : ' + (await r.text()); }
+      });
+
+      cancelBtn.addEventListener('click', () => toggle.click());
+
+      const frameWin = () => document.getElementById('scaleFrame').contentWindow;
+      for (const inp of document.querySelectorAll('.pad-in')) {
+        inp.addEventListener('change', () => {
+          // Les champs sont en em ; l'éditeur travaille en pixels, on
+          // convertit via la police de l'élément (16 px par défaut suffirait
+          // rarement) -- c'est l'éditeur qui reconvertit proprement.
+          frameWin().postMessage({ type: 'cv-setspacing-em', side: inp.dataset.side, em: Number(inp.value) }, '*');
+        });
+      }
+      for (const btn of document.querySelectorAll('.mode-btn')) {
+        btn.addEventListener('click', () => {
+          frameWin().postMessage({ type: 'cv-setmode', mode: btn.dataset.mode }, '*');
+        });
+      }
+
+      // Calque de décalque : la capture cible superposée en transparence
+      // par-dessus la preview, pour aligner les éléments à l'oeil.
+      const onionOn = document.getElementById('onionOn');
+      const onionOpacity = document.getElementById('onionOpacity');
+      const onionVal = document.getElementById('onionVal');
+      function pushOnion() {
+        if (!onionOn) return;
+        const frame = document.getElementById('scaleFrame');
+        if (!frame || !frame.contentWindow) return;
+        frame.contentWindow.postMessage({
+          type: 'cv-onion',
+          src: ${JSON.stringify(targetForOnion)},
+          on: onionOn.checked,
+          opacity: Number(onionOpacity.value) / 100,
+        }, '*');
+        if (onionVal) onionVal.textContent = onionOpacity.value + ' %';
+      }
+      if (onionOn) {
+        onionOn.addEventListener('change', pushOnion);
+        onionOpacity.addEventListener('input', pushOnion);
+      }
+    </script>
+  `));
+});
+
+const PORT = process.env.PIPELINE_PORT || 5050;
+app.listen(PORT, () => console.log(`Interface pipeline sur http://localhost:${PORT}`));

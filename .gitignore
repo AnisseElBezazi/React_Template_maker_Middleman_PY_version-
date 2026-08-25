@@ -1,0 +1,20 @@
+# Secrets -- ne jamais committer (voir pipeline/.env.example pour le modèle)
+.env
+*.env
+!*.env.example
+
+# Skills installées via `npx skills add` : dépendances externes, réinstallables
+.agents/skills/
+
+# Dépendances et environnements
+node_modules/
+venv/
+__pycache__/
+*.pyc
+
+# Sorties de la pipeline : régénérées à chaque run, souvent volumineuses
+pipeline/out/
+pipeline/uploads/
+
+# macOS
+.DS_Store

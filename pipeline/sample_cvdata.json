@@ -1,0 +1,75 @@
+{
+  "personal_information": {
+    "trigram": "JMA",
+    "last_name": "Martin",
+    "first_name": "Jeanne",
+    "full_name": "Jeanne Martin",
+    "nb_exp_years": 8,
+    "nb_school_years": 5,
+    "job_title": "Consultante Senior Data & IA",
+    "introduction": "Consultante spécialisée dans la mise en place de plateformes data pour des clients grands comptes du secteur bancaire et assurance."
+  },
+  "formations": [
+    { "name": "Master Data Science", "school": "Université Paris-Dauphine", "dates": "2017 à 2019" }
+  ],
+  "certifications": [
+    { "name": "AWS Certified Solutions Architect", "dates": "2022" },
+    { "name": "Microsoft Certified: Azure Data Engineer", "dates": "2021" }
+  ],
+  "technical_skills": [
+    { "name": "Langages", "content": [{ "type": "list", "text": "Python" }, { "type": "list", "text": "SQL" }, { "type": "list", "text": "JavaScript" }] },
+    { "name": "Cloud", "content": [{ "type": "list", "text": "Azure" }, { "type": "list", "text": "AWS" }] }
+  ],
+  "functional_skills": [
+    { "name": "Gestion de projet", "content": [{ "type": "list", "text": "Pilotage d'équipe" }, { "type": "list", "text": "Méthodologie Agile" }] }
+  ],
+  "languages": [
+    { "name": "Français", "content": "Langue maternelle" },
+    { "name": "Anglais", "content": "Courant" }
+  ],
+  "personal_projects": [
+    {
+      "name": "Analyse de données sportives",
+      "job_title": "Projet personnel",
+      "project": "Application de visualisation de statistiques de course à pied connectée à l'API Strava.",
+      "technical_environment": "Python / Streamlit",
+      "description": [
+        { "type": "list", "text": "Développement d'un dashboard Streamlit connecté à l'API Strava" },
+        { "type": "list", "text": "Mise en place d'un pipeline de collecte de données automatisé" }
+      ]
+    }
+  ],
+  "experiences": [
+    {
+      "company": "Entreprise Alpha",
+      "period": "Janvier 2022 à aujourd'hui",
+      "job_title": "Consultante Senior Data",
+      "projects": [
+        { "type": "paragraph", "text": "Refonte de la plateforme data groupe" }
+      ],
+      "projects_context": "Refonte de la plateforme data d'un grand groupe bancaire, migration vers le cloud Azure.",
+      "team_and_methodology": "Équipe de 5 personnes en méthodologie Agile/Scrum, sprints de 2 semaines.",
+      "technical_environment": "Python / Azure Data Factory / Power BI / SQL Server",
+      "description": [
+        { "type": "paragraph", "text": "Pilotage de l'équipe data et coordination avec les équipes métier." },
+        { "type": "paragraph", "text": "Mise en place de pipelines ETL sur Azure Data Factory." },
+        { "type": "paragraph", "text": "Développement de tableaux de bord Power BI pour la direction générale." }
+      ]
+    },
+    {
+      "company": "Entreprise Beta",
+      "period": "Mars 2019 à Décembre 2021",
+      "job_title": "Consultante Data",
+      "projects": [
+        { "type": "paragraph", "text": "Programme de conformité réglementaire" }
+      ],
+      "projects_context": "Programme de conformité réglementaire pour un acteur de l'assurance.",
+      "team_and_methodology": "Équipe de 3 personnes, méthodologie Kanban.",
+      "technical_environment": "Python / SQL",
+      "description": [
+        { "type": "paragraph", "text": "Développement de modèles de scoring pour l'évaluation des risques." },
+        { "type": "paragraph", "text": "Automatisation des rapports réglementaires mensuels." }
+      ]
+    }
+  ]
+}
