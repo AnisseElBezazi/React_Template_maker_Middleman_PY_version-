@@ -1,4 +1,6 @@
-Tu vas maintenant comparer TON PROPRE rendu à l'image CIBLE et t'auto-corriger. Tu reçois 3 images, dans cet ordre, TOUTES avec une grille de repères magenta superposée (graduée tous les 50px, origine en haut à gauche) pour que tu puisses raisonner en COORDONNÉES plutôt qu'à l'oeil :
+{{PAGE_SCOPE}}
+
+Tu vas maintenant comparer TON PROPRE rendu à l'image CIBLE et t'auto-corriger. Tu reçois, POUR CHAQUE PAGE, 3 images dans cet ordre, TOUTES avec une grille de repères magenta superposée (graduée tous les 50px, origine en haut à gauche) pour que tu puisses raisonner en COORDONNÉES plutôt qu'à l'oeil :
 
 1. Image CIBLE (avec grille)
 2. TON RENDU ACTUEL (avec grille)

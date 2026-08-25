@@ -112,7 +112,7 @@ function placeExtractedImages(jsxCode, outDir) {
  * calque ne contient AUCUN texte -- donc plus aucun risque de figer du
  * Jinja brut ({{ ... }}) dans une découpe, ce qui interdisait jusqu'ici de
  * découper autre chose qu'un petit élément isolé. */
-function cropExtraImages(rawResponseText, targetPath, outDir, pythonBin) {
+function cropExtraImages(rawResponseText, targetPaths, outDir, pythonBin) {
   const match = rawResponseText.match(/EXTRA_IMAGES:\s*(\[[\s\S]*?\])/);
   if (!match) return;
   let entries;
@@ -121,10 +121,15 @@ function cropExtraImages(rawResponseText, targetPath, outDir, pythonBin) {
   } catch {
     return;
   }
-  const bgPath = path.join(outDir, "background-layer.png");
-  const sourcePath = fs.existsSync(bgPath) ? bgPath : targetPath;
-  for (const { index, x, y, width: w, height: h } of entries) {
+  // Quand on reproduit un template entier, une découpe est relative à UNE
+  // page précise : ses coordonnées n'ont de sens que dans le repère de cette
+  // page-là. `page` vaut 1 par défaut (cas mono-page, et modèle qui l'omet).
+  for (const { index, x, y, width: w, height: h, page } of entries) {
     if (index == null || x == null || y == null || !w || !h) continue;
+    const pageNum = Number.isInteger(page) && page >= 1 ? page : 1;
+    const targetPath = targetPaths[pageNum - 1] || targetPaths[0];
+    const bgPath = path.join(outDir, `background-layer-${pageNum}.png`);
+    const sourcePath = fs.existsSync(bgPath) ? bgPath : targetPath;
     const outPath = path.join(outDir, `extracted-${index}.png`);
     const result = spawnSync(pythonBin, [
       path.join(PIPELINE_ROOT, "crop_image.py"), sourcePath, String(x), String(y), String(w), String(h), outPath,
@@ -189,13 +194,18 @@ export async function runPipeline({
     usingCustomSchema = true;
   }
 
-  // --- Étape 1 : extraction (screenshot cible + dictionnaire de style, une seule page) ---
-  onProgress("extract", `Génération du screenshot cible et du dictionnaire HTML (page ${pageNumber})...`);
+  // --- Étape 1 : extraction (screenshots cibles + dictionnaire de style) ---
+  // `pageNumber` vaut soit un numéro de page, soit "all" pour reproduire le
+  // template ENTIER -- toutes les pages du PDF d'un coup.
+  const allPages = String(pageNumber).toLowerCase() === "all";
+  onProgress("extract", allPages
+    ? "Génération des screenshots cibles et du dictionnaire HTML (toutes les pages)..."
+    : `Génération du screenshot cible et du dictionnaire HTML (page ${pageNumber})...`);
   const venvPython = path.join(PROJECT_ROOT, "venv", "bin", "python3");
   const pythonBin = fs.existsSync(venvPython) ? venvPython : "python3";
   const extractResult = spawnSync(
     pythonBin,
-    [path.join(PIPELINE_ROOT, "extract.py"), pdfPath, outDir, String(pageNumber)],
+    [path.join(PIPELINE_ROOT, "extract.py"), pdfPath, outDir, allPages ? "all" : String(pageNumber)],
     { encoding: "utf-8" }
   );
   if (extractResult.status !== 0)
@@ -205,16 +215,18 @@ export async function runPipeline({
   const dictionaryPath = extractLines.find((l) => l.startsWith("DICTIONARY:")).slice("DICTIONARY:".length);
   const jinjaTagsPath = extractLines.find((l) => l.startsWith("JINJA_TAGS:"))?.slice("JINJA_TAGS:".length);
   const extractedImagesPath = extractLines.find((l) => l.startsWith("EXTRACTED_IMAGES:"))?.slice("EXTRACTED_IMAGES:".length);
-  const targetPath = extractLines.find((l) => l.startsWith("TARGET:"))?.slice("TARGET:".length);
+  const targetPaths = extractLines.filter((l) => l.startsWith("TARGET:")).map((l) => l.slice("TARGET:".length));
+  const targetPath = targetPaths[0];
   if (!targetPath)
     throw new Error("Aucune image cible produite par extract.py.");
+  const pageCount = targetPaths.length;
 
   const { width, height } = pngDimensions(targetPath);
   const jinjaTags = jinjaTagsPath ? JSON.parse(fs.readFileSync(jinjaTagsPath, "utf-8")) : [];
   const extractedImages = extractedImagesPath ? JSON.parse(fs.readFileSync(extractedImagesPath, "utf-8")) : [];
   onProgress(
     "extract",
-    `Cible: ${path.basename(targetPath)} (${width}x${height}px), ${jinjaTags.length} tag(s) Jinja, ${extractedImages.length} image(s) extraite(s).`
+    `${pageCount} page(s) cible (${width}x${height}px), ${jinjaTags.length} tag(s) Jinja, ${extractedImages.length} image(s) extraite(s).`
   );
 
   // Calque décor : le fond de page SANS TEXTE que pdftohtml -c produit déjà
@@ -223,15 +235,18 @@ export async function runPipeline({
   // CSS échoue dès qu'elle sort du rectangle simple, et découper la capture
   // cible y figerait le texte Jinja brut. Normalisé à la taille exacte de la
   // cible pour que les coordonnées soient interchangeables.
-  const backgroundPath = path.join(outDir, "background-layer.png");
-  const bgResult = spawnSync(
-    pythonBin,
-    [path.join(PIPELINE_ROOT, "extract_background.py"), dictionaryPath, backgroundPath, String(width), String(height)],
-    { encoding: "utf-8" }
-  );
-  const hasBackground = bgResult.status === 0 && fs.existsSync(backgroundPath);
+  const backgroundPaths = targetPaths.map((_, i) => {
+    const bgPath = path.join(outDir, `background-layer-${i + 1}.png`);
+    const bgResult = spawnSync(
+      pythonBin,
+      [path.join(PIPELINE_ROOT, "extract_background.py"), dictionaryPath, bgPath, String(width), String(height), String(i + 1)],
+      { encoding: "utf-8" }
+    );
+    return bgResult.status === 0 && fs.existsSync(bgPath) ? bgPath : null;
+  });
+  const hasBackground = backgroundPaths.some(Boolean);
   onProgress("extract", hasBackground
-    ? "Calque décor (fond sans texte) extrait."
+    ? `Calque décor (fond sans texte) extrait pour ${backgroundPaths.filter(Boolean).length}/${pageCount} page(s).`
     : "Calque décor indisponible -- les découpes retomberont sur la capture cible.");
 
   // Dictionnaire compact (texte+taille+couleur, sans le HTML/CSS autour) --
@@ -291,12 +306,17 @@ export async function runPipeline({
   // premier dans les deux messages -- le cache Anthropic ne s'accroche que
   // sur un préfixe identique, donc rien ne doit précéder ce bloc dans
   // aucune des deux passes pour qu'il soit effectivement réutilisé.
-  const targetImageB64 = fs.readFileSync(targetPath).toString("base64");
-  const targetImageBlock = {
-    type: "image",
-    source: { type: "base64", media_type: "image/png", data: targetImageB64 },
-    cache_control: { type: "ephemeral" },
-  };
+  // Une entrée par page cible. Le marqueur de cache est posé sur la DERNIÈRE
+  // image : le cache ne s'accroche que sur un préfixe complet, donc le poser
+  // sur la première laisserait les pages suivantes hors cache.
+  const targetImageBlocks = targetPaths.flatMap((tp, i) => [
+    ...(pageCount > 1 ? [{ type: "text", text: `PAGE ${i + 1}/${pageCount} -- image CIBLE :` }] : []),
+    {
+      type: "image",
+      source: { type: "base64", media_type: "image/png", data: fs.readFileSync(tp).toString("base64") },
+      ...(i === pageCount - 1 ? { cache_control: { type: "ephemeral" } } : {}),
+    },
+  ]);
 
   const anthropic = IS_MOONSHOT ? null : new Anthropic();
   const moonshot = IS_MOONSHOT
@@ -465,6 +485,13 @@ export async function runPipeline({
       throw new Error(`Rendu de ${jsxPath} échoué: ${result.stderr || result.stdout}`);
     if (result.stderr && result.stderr.includes("RENDER_ERRORS:"))
       onProgress("render", `Avertissement -- erreurs JS dans le composant rendu: ${result.stderr.trim()}`);
+    // Captures page par page, nécessaires pour comparer la page N du rendu à
+    // la page N de la cible (le diff pixelmatch exige des tailles identiques,
+    // ce que la capture empilée de toutes les pages ne donne pas).
+    return (result.stdout || "")
+      .split("\n")
+      .filter((l) => l.startsWith("PAGE_RENDER:"))
+      .map((l) => l.slice("PAGE_RENDER:".length).split(":").slice(1).join(":"));
   }
 
   const passes = [];
@@ -475,20 +502,36 @@ export async function runPipeline({
   // template -- isolé dans son propre bloc caché plutôt que noyé dans le
   // texte du prompt, pour que les appels suivants (page suivante, autre
   // template, dans la fenêtre de cache) le relisent à prix cassé.
+  // Cadrage du périmètre : une seule page, ou le template entier. Les règles
+  // qui suivent sont écrites au singulier ("la page") -- sans ce cadrage en
+  // tête, un envoi multi-pages est lu comme plusieurs variantes de la même
+  // page et le modèle n'en reproduit qu'une.
+  const pageScopeText = pageCount > 1
+    ? [
+        `PÉRIMÈTRE : tu dois reproduire le template ENTIER, soit ${pageCount} pages. Les ${pageCount} images cibles te sont fournies ci-dessous, dans l'ordre, chacune annoncée par "PAGE k/${pageCount}".`,
+        `Ce ne sont PAS ${pageCount} variantes de la même page ni ${pageCount} templates différents : c'est UN SEUL document, à rendre par UN SEUL composant.`,
+        `Attention à ne pas confondre deux choses : le NOMBRE de pages du document final n'est pas figé -- c'est le moteur de pagination qui en émet autant que les vraies données l'exigent, et il peut donc y en avoir plus ou moins que ${pageCount}.`,
+        `Ce que les images cibles te montrent, c'est l'HABILLAGE de chaque page (en-tête, pied de page, bandeaux, filigranes, marges) et l'ORDRE des sections. Si les pages 2 et suivantes partagent le même habillage, écris-le UNE fois et laisse le moteur le répéter ; ne code jamais "${pageCount} pages" en dur.`,
+        `Si une page a un habillage à part (page de couverture, dernière page), reproduis-le comme tel.`,
+        `Pour une découpe EXTRA_IMAGES, ajoute le champ "page" (1-${pageCount}) indiquant de quelle page viennent les coordonnées : EXTRA_IMAGES:[{"index": 10, "page": 2, "x": 1050, "y": 15, "width": 90, "height": 70}]. Sans ce champ, la découpe est faite sur la page 1.`,
+      ].join("\n")
+    : "PÉRIMÈTRE : une seule page t'est fournie, tu ne reproduis que celle-là.";
+
   const [pass1Before, pass1After] = readPromptTemplate("pass1.md").split("{{GOLDEN_REFERENCE}}").map((part) =>
     part
+      .replace(/\{\{PAGE_SCOPE\}\}/g, pageScopeText)
       .replace(/\{\{CANVAS_SIZE\}\}/g, `${width} x ${height}`)
       .replace(/\{\{JINJA_TAGS\}\}/g, jinjaTagsText)
       .replace(/\{\{EXTRACTED_IMAGES\}\}/g, extractedImagesText)
   );
-  const backgroundImageBlocks = hasBackground
+  const backgroundImageBlocks = backgroundPaths.flatMap((bgPath, i) => bgPath
     ? [
-        { type: "text", text: `CALQUE DÉCOR (même repère que l'image cible, ${width} x ${height}) -- toutes les formes/photos/logos de la page, SANS AUCUN TEXTE. C'est ta source pour toute découpe EXTRA_IMAGES :` },
-        { type: "image", source: { type: "base64", media_type: "image/png", data: fs.readFileSync(backgroundPath).toString("base64") } },
+        { type: "text", text: `CALQUE DÉCOR${pageCount > 1 ? ` DE LA PAGE ${i + 1}/${pageCount}` : ""} (même repère que l'image cible, ${width} x ${height}) -- toutes les formes/photos/logos de la page, SANS AUCUN TEXTE. C'est ta source pour toute découpe EXTRA_IMAGES${pageCount > 1 ? ` (utilise "page": ${i + 1} pour découper ici)` : ""} :` },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: fs.readFileSync(bgPath).toString("base64") } },
       ]
-    : [];
+    : []);
   const jsx1Raw = await callClaude("pass1", [
-    targetImageBlock,
+    ...targetImageBlocks,
     { type: "text", text: pass1Before },
     { type: "text", text: goldenReference, cache_control: { type: "ephemeral" } },
     { type: "text", text: pass1After },
@@ -499,12 +542,12 @@ export async function runPipeline({
   assertValidJsx(jsx1, "1");
   const jsx1Path = path.join(outDir, "attempt1.jsx");
   fs.writeFileSync(jsx1Path, jsx1);
-  cropExtraImages(jsx1Raw, targetPath, outDir, pythonBin);
+  cropExtraImages(jsx1Raw, targetPaths, outDir, pythonBin);
   saveAssetsMap(jsx1Raw, outDir);
   placeExtractedImages(jsx1, outDir);
   const png1Path = path.join(outDir, "attempt1.png");
   onProgress("pass1", "Rendu de la tentative 1...");
-  render(jsx1Path, png1Path);
+  const pass1PagePaths = render(jsx1Path, png1Path);
   passes.push({ name: "pass1", label: "Passe 1 -- premier jet", jsxPath: jsx1Path, pngPath: png1Path, htmlPath: png1Path.replace(/\.png$/i, ".html") });
   onProgress("pass1", "OK");
 
@@ -519,33 +562,66 @@ export async function runPipeline({
   onProgress("pass2", "Génération de la grille de repères et de l'image de différence...");
   let pass2ImageBlocks;
   try {
-    const targetGridPath = path.join(outDir, "target-grid.png");
-    const render1GridPath = path.join(outDir, "attempt1-grid.png");
-    const diffPath = path.join(outDir, "diff1.png");
-    const diffGridPath = path.join(outDir, "diff1-grid.png");
-    await addGridOverlay(targetPath, targetGridPath, width, height);
-    await addGridOverlay(png1Path, render1GridPath, width, height);
-    const diffStats = generateDiffImage(targetPath, png1Path, diffPath);
-    await addGridOverlay(diffPath, diffGridPath, width, height);
-    onProgress("pass2", `Diff pixelmatch : ${(diffStats.diffRatio * 100).toFixed(1)}% de pixels différents.`);
-    pass2ImageBlocks = [
-      { type: "text", text: "Image 1 (CIBLE, grille de repères tous les 50px) :" },
-      { type: "image", source: { type: "base64", media_type: "image/png", data: fs.readFileSync(targetGridPath).toString("base64") } },
-      { type: "text", text: "Image 2 (TON RENDU ACTUEL, même grille) :" },
-      { type: "image", source: { type: "base64", media_type: "image/png", data: fs.readFileSync(render1GridPath).toString("base64") } },
-      { type: "text", text: "Image 3 (DIFFÉRENCE pixelmatch, rouge = écart, même grille) :" },
-      { type: "image", source: { type: "base64", media_type: "image/png", data: fs.readFileSync(diffGridPath).toString("base64") } },
-    ];
+    // Comparaison PAGE PAR PAGE : la capture empilée du rendu ne peut pas
+    // être confrontée à une cible d'une seule page (pixelmatch exige des
+    // dimensions identiques), et un écart sur la page 3 doit être visible
+    // comme tel, pas noyé dans une image géante.
+    const renderPagePaths = pass1PagePaths.length ? pass1PagePaths : [png1Path];
+    const comparable = Math.min(pageCount, renderPagePaths.length);
+    if (!comparable) throw new Error("aucune page rendue à comparer");
+
+    pass2ImageBlocks = [];
+    const ratios = [];
+    for (let i = 0; i < comparable; i++) {
+     // Une page qui échoue (dimensions inattendues, capture manquante) ne
+     // doit pas priver la passe 2 des repères de toutes les autres.
+     try {
+      const suffix = pageCount > 1 ? `-p${i + 1}` : "";
+      const targetGridPath = path.join(outDir, `target-grid${suffix}.png`);
+      const renderGridPath = path.join(outDir, `attempt1-grid${suffix}.png`);
+      const diffPath = path.join(outDir, `diff1${suffix}.png`);
+      const diffGridPath = path.join(outDir, `diff1-grid${suffix}.png`);
+      await addGridOverlay(targetPaths[i], targetGridPath, width, height);
+      await addGridOverlay(renderPagePaths[i], renderGridPath, width, height);
+      const diffStats = generateDiffImage(targetPaths[i], renderPagePaths[i], diffPath);
+      await addGridOverlay(diffPath, diffGridPath, width, height);
+      ratios.push(diffStats.diffRatio);
+      const label = pageCount > 1 ? `PAGE ${i + 1}/${pageCount} -- ` : "";
+      pass2ImageBlocks.push(
+        { type: "text", text: `${label}Image 1 (CIBLE, grille de repères tous les 50px) :` },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: fs.readFileSync(targetGridPath).toString("base64") } },
+        { type: "text", text: `${label}Image 2 (TON RENDU ACTUEL, même grille) :` },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: fs.readFileSync(renderGridPath).toString("base64") } },
+        { type: "text", text: `${label}Image 3 (DIFFÉRENCE pixelmatch, rouge = écart, même grille) :` },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: fs.readFileSync(diffGridPath).toString("base64") } },
+      );
+     } catch (pageErr) {
+      onProgress("pass2", `Page ${i + 1} : grille/diff impossible (${pageErr.message}) -- page ignorée dans la comparaison.`);
+     }
+    }
+    if (!pass2ImageBlocks.length) throw new Error("aucune page comparable");
+
+    // Un nombre de pages différent de la cible est en soi le plus gros écart
+    // possible : il faut le dire explicitement, aucune image ne le montre.
+    if (renderPagePaths.length !== pageCount) {
+      pass2ImageBlocks.unshift({
+        type: "text",
+        text: `ÉCART MAJEUR À CORRIGER EN PRIORITÉ : la cible fait ${pageCount} page(s), ton rendu en produit ${renderPagePaths.length}. `
+          + `Seules les ${comparable} première(s) sont comparées ci-dessous. Cherche la cause (contenu qui déborde, page fixe en trop, section absente) avant tout autre ajustement.`,
+      });
+    }
+    onProgress("pass2", `Diff pixelmatch : ${ratios.map((r, i) => `page ${i + 1} ${(r * 100).toFixed(1)}%`).join(", ")} de pixels différents.`);
   } catch (err) {
     onProgress("pass2", `Grille/diff indisponible (${err.message}) -- repli sur l'envoi simple des 2 images.`);
     pass2ImageBlocks = [
-      targetImageBlock,
-      { type: "text", text: "^ Image 1 (CIBLE)." },
-      { type: "text", text: "Image 2 (TON RENDU ACTUEL) :" },
+      ...targetImageBlocks,
+      { type: "text", text: "^ Image(s) 1 (CIBLE)." },
+      { type: "text", text: "Image 2 (TON RENDU ACTUEL, toutes pages empilées) :" },
       { type: "image", source: { type: "base64", media_type: "image/png", data: fs.readFileSync(png1Path).toString("base64") } },
     ];
   }
   const pass2Prompt = readPromptTemplate("pass2.md")
+    .replace(/\{\{PAGE_SCOPE\}\}/g, pageScopeText)
     .replace("{{JSX}}", jsx1)
     .replace("{{DICTIONARY}}", dictionaryCompact)
     .replace(/\{\{CANVAS_SIZE\}\}/g, `${width} x ${height}`);
@@ -556,7 +632,7 @@ export async function runPipeline({
   assertValidJsx(jsx2, "2");
   const jsx2Path = path.join(outDir, "attempt2.jsx");
   fs.writeFileSync(jsx2Path, jsx2);
-  cropExtraImages(jsx2Raw, targetPath, outDir, pythonBin);
+  cropExtraImages(jsx2Raw, targetPaths, outDir, pythonBin);
   saveAssetsMap(jsx2Raw, outDir);
   placeExtractedImages(jsx2, outDir);
   const png2Path = path.join(outDir, "attempt2.png");
