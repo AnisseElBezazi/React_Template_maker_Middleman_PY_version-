@@ -25,7 +25,7 @@ function findImgTagSpan(source, index) {
 // Mêmes balises, dans le même ordre, que l'étiquetage fait au rendu
 // (render.mjs) -- c'est ce qui garantit que l'index reçu de l'éditeur
 // désigne bien la même balise dans le source.
-const TEXT_TAG_RE = /<(p|h[1-6]|li)([\s>])/g;
+const TEXT_TAG_RE = /<(p|h[1-6]|li|div)([\s>])/g;
 
 function findTagSpan(source, re, index) {
   re.lastIndex = 0;

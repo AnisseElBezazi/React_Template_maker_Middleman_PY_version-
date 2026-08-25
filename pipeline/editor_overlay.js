@@ -19,6 +19,11 @@
   // Un bloc de texte s'ajuste soit en marge INTÉRIEURE (padding), soit en
   // marge EXTÉRIEURE (margin) ; on bascule avec P / M.
   let spacingMode = "padding";
+  // Outil actif, piloté par la barre du bas : "none" (inerte, on se contente
+  // de parcourir), "all", "text" ou "img". Il filtre ce que le clic peut
+  // attraper -- sans quoi viser un libellé posé sur une image relève de la
+  // chance.
+  let tool = "all";
 
   // "cls" : élément rendu par le moteur PARTAGÉ (titres de section). On ne
   // touchera pas au moteur : l'ajustement ira modifier la classe que le
@@ -94,7 +99,15 @@
     /* Pas de contour permanent : il défigurait la preview. Le repérage se
        fait au survol uniquement, et le panneau latéral liste ce qui est
        éditable. */
-    img[data-cvimg]:hover { outline: ${ui(1.5)}px solid rgba(99,102,241,0.9); outline-offset: ${ui(1)}px; }
+    html.cv-tool-all img[data-cvimg]:hover,
+    html.cv-tool-img img[data-cvimg]:hover { outline: ${ui(1.5)}px solid rgba(99,102,241,0.9); outline-offset: ${ui(1)}px; }
+    html.cv-tool-all [data-cvtext]:not(div):hover, html.cv-tool-all [data-cvcls]:not(div):hover,
+    html.cv-tool-text [data-cvtext]:not(div):hover, html.cv-tool-text [data-cvcls]:not(div):hover {
+      outline: ${ui(1.5)}px dashed rgba(99,102,241,0.75); outline-offset: ${ui(1)}px; }
+    html.cv-tool-div div[data-cvtext]:hover {
+      outline: ${ui(1.5)}px dashed rgba(99,102,241,0.9); outline-offset: ${ui(1)}px;
+    }
+    html.cv-tool-none img[data-cvimg] { cursor: default; }
     #cv-sel { position: absolute; border: ${ui(2)}px solid #6366f1; pointer-events: none; z-index: 999998;
               box-shadow: 0 0 0 ${ui(1)}px rgba(255,255,255,0.9); }
     .cv-h { position: absolute; width: ${ui(12)}px; height: ${ui(12)}px; background: #fff;
@@ -120,6 +133,12 @@
     // déplacement : elle n'a en pratique pas de voisin à décaler, et
     // l'interdire rendait inaccessibles précisément les décors à recaler.
     img.dataset.cvMovable = "1";
+  }
+
+  const TOOL_CLASSES = ["cv-tool-none", "cv-tool-all", "cv-tool-text", "cv-tool-img", "cv-tool-div"];
+  function setToolClass() {
+    doc.documentElement.classList.remove(...TOOL_CLASSES);
+    doc.documentElement.classList.add("cv-tool-" + tool);
   }
 
   const DRAG_CLASS = { move: "cv-drag-move" };
@@ -150,17 +169,56 @@
    * si bien que le clic atterrit sur un <p> ou un <div> et que l'image
    * paraît inerte. On parcourt donc toute la pile de points, pas seulement
    * l'élément du dessus. */
-  function imgAtPoint(x, y) {
+  function isConsistentWithTool(el, t) {
+    if (!el || t === "none") return false;
+    if (t === "img") return el.tagName === "IMG" || el.dataset.cvimg !== undefined;
+    if (t === "text") return (el.dataset.cvtext !== undefined || el.dataset.cvcls !== undefined) && el.tagName !== "DIV";
+    if (t === "div") return el.tagName === "DIV" && el.dataset && el.dataset.cvtext !== undefined;
+    if (t === "all") return el.tagName === "IMG" || el.dataset.cvimg !== undefined || el.dataset.cvtext !== undefined || el.dataset.cvcls !== undefined;
+    return false;
+  }
+
+  function imgAtPoint(x, y, outermost = false) {
+    if (tool === "none") return null;
     const stack = doc.elementsFromPoint(x, y) || [];
-    // Les images d'abord : ce sont les plus petites cibles, et elles sont
-    // souvent recouvertes par le bloc de contenu.
+
+    if (tool === "img") {
+      for (const el of stack) {
+        if (el.matches && el.matches("img[data-cvimg]")) return el;
+      }
+      return null;
+    }
+
+    if (tool === "text") {
+      const blocks = stack.filter((el) =>
+        el.matches && el.matches("[data-cvtext],[data-cvcls]") && el.tagName !== "DIV");
+      if (!blocks.length) return null;
+      if (!outermost) return blocks[0];
+      const current = blocks.indexOf(selected);
+      if (current !== -1 && current + 1 < blocks.length) return blocks[current + 1];
+      return blocks[1] || blocks[0];
+    }
+
+    if (tool === "div") {
+      const divs = stack.filter((el) => el.tagName === "DIV" && el.dataset && el.dataset.cvtext !== undefined);
+      if (!divs.length) return null;
+      if (!outermost) return divs[0];
+      const cur = divs.indexOf(selected);
+      if (cur !== -1 && cur + 1 < divs.length) return divs[cur + 1];
+      return divs[1] || divs[0];
+    }
+
+    // Outil "all"
     for (const el of stack) {
       if (el.matches && el.matches("img[data-cvimg]")) return el;
     }
-    for (const el of stack) {
-      if (el.matches && el.matches("[data-cvtext],[data-cvcls]")) return el;
-    }
-    return null;
+    const blocks = stack.filter((el) =>
+      el.matches && el.matches("[data-cvtext],[data-cvcls]") && el.tagName !== "DIV");
+    if (!blocks.length) return null;
+    if (!outermost) return blocks[0];
+    const current = blocks.indexOf(selected);
+    if (current !== -1 && current + 1 < blocks.length) return blocks[current + 1];
+    return blocks[1] || blocks[0];
   }
 
   // Une image pivotée (filigrane vertical, très courant) a ses axes internes
@@ -308,6 +366,11 @@
           if (inline) entry[mode + SIDES[side]] = toEm(cur, selected);
         }
       }
+      // Bloc déplacé ou redimensionné.
+      if (selected.style.left) entry.left = toEm(parseFloat(selected.style.left), selected);
+      if (selected.style.top) entry.top = toEm(parseFloat(selected.style.top), selected);
+      if (selected.style.width) entry.width = toEm(parseFloat(selected.style.width), selected);
+      if (selected.style.height) entry.height = toEm(parseFloat(selected.style.height), selected);
       parent.postMessage({ type: "cv-edits", edits, textEdits, classEdits }, "*");
       notifySelection();
       pushHistory();
@@ -369,12 +432,12 @@
     if (el) {
       el.dataset.cvMovable = "1";
     }
-    // Pour un bloc de texte on n'ajuste que les quatre côtés : les
-    // poignées d'angle n'auraient pas de sens sur une marge.
-    const isText = el && isTextLike(el);
+    // Pour un texte inline on n'ajuste que les 4 côtés ; pour un DIV ou une image,
+    // toutes les poignées de redimensionnement sont activées.
+    const isInlineText = el && isTextLike(el) && el.tagName !== "DIV";
     for (const h of box.querySelectorAll(".cv-h")) {
       const corner = h.dataset.handle.length === 2;
-      h.style.display = isText && corner ? "none" : "block";
+      h.style.display = isInlineText && corner ? "none" : "block";
     }
     drawBox();
     notifySelection();
@@ -395,7 +458,8 @@
     const handle = e.target.closest(".cv-h");
     if (handle && selected) {
       const g = geom(selected);
-      if (isTextLike(selected)) {
+      const isInlineText = isTextLike(selected) && selected.tagName !== "DIV";
+      if (isInlineText) {
         const side = handle.dataset.handle;
         drag = {
           mode: "spacing", side, x0: e.clientX, y0: e.clientY, pointerId: e.pointerId,
@@ -412,12 +476,28 @@
       e.preventDefault();
       return;
     }
-    const img = imgAtPoint(e.clientX, e.clientY);
+    // Cliquer À L'INTÉRIEUR de la sélection courante la conserve et démarre
+    // son déplacement. Sans ça, remonter au conteneur avec Alt puis vouloir
+    // le déplacer re-sélectionnait aussitôt le texte sous le curseur, et le
+    // conteneur restait inatteignable.
+    let img = imgAtPoint(e.clientX, e.clientY, e.altKey);
     if (img) {
       select(img);
       if (isTextLike(img)) {
+        const absolute = getComputedStyle(img).position === "absolute";
+        drag = {
+          mode: absolute ? "move" : "nudge",
+          x0: e.clientX, y0: e.clientY, pointerId: e.pointerId,
+          g: geom(img),
+          startMargins: {
+            left: spacingPx(img, "w", "margin"),
+            top: spacingPx(img, "n", "margin"),
+          },
+        };
+        setDragCursor("move");
+        capture();
         e.preventDefault();
-        return; // un bloc de texte s'ajuste par ses poignées, pas en le traînant
+        return;
       }
       if (img.dataset.cvMovable === "1") {
         drag = { mode: "move", x0: e.clientX, y0: e.clientY, g: geom(img), pointerId: e.pointerId };
@@ -425,7 +505,7 @@
         capture();
       }
       e.preventDefault();
-    } else if (!e.target.closest("#cv-sel")) {
+    } else {
       select(null);
     }
   });
@@ -436,6 +516,13 @@
     const dy = e.clientY - drag.y0;
     if (dx || dy) drag.moved = true;
     const g = drag.g;
+
+    if (drag.mode === "nudge") {
+      setSpacing(selected, "w", "margin", drag.startMargins.left + dx);
+      setSpacing(selected, "n", "margin", drag.startMargins.top + dy);
+      drawBox();
+      return;
+    }
 
     if (drag.mode === "spacing") {
       // On tire VERS L'INTÉRIEUR pour augmenter une marge intérieure,
@@ -591,6 +678,39 @@
       setSpacing(selected, e.data.side, spacingMode, e.data.em * emOf(selected));
       record();
     }
+    if (e.data.type === "cv-setgeom-em" && selected && !isTextLike(selected)) {
+      if (e.data.width != null) selected.style.width = Math.max(4, e.data.width * emOf(selected)) + "px";
+      if (e.data.height != null) selected.style.height = Math.max(4, e.data.height * emOf(selected)) + "px";
+      if (e.data.left != null) {
+        selected.style.position = "absolute";
+        selected.style.right = "auto";
+        selected.style.left = (e.data.left * emOf(selected)) + "px";
+      }
+      if (e.data.top != null) {
+        selected.style.position = "absolute";
+        selected.style.bottom = "auto";
+        selected.style.top = (e.data.top * emOf(selected)) + "px";
+      }
+      drawBox();
+      record();
+    }
+    if (e.data.type === "cv-settool") {
+      tool = e.data.tool;
+      setToolClass();
+      // Changer d'outil doit lâcher une sélection que le nouvel outil ne
+      // saurait plus atteindre, sinon on garde à l'écran un cadre sur un
+      // élément devenu inéditable.
+      const isDiv = selected && selected.tagName === "DIV";
+      const inconsistent = selected && (
+        (tool === "text" && (kindOf(selected) === "img" || isDiv))
+        || (tool === "img" && kindOf(selected) !== "img")
+        || (tool === "div" && !isDiv)
+        || (tool === "all" && isDiv)
+      );
+      if (tool === "none" || inconsistent) {
+        select(null);
+      }
+    }
     if (e.data.type === "cv-setmode") {
       spacingMode = e.data.mode;
       notifySelection();
@@ -623,5 +743,18 @@
   // d'oeil que le navigateur exécute bien la dernière version du script et
   // pas une copie en cache.
   pushHistory(); // état initial, cible du dernier "annuler"
-  parent.postMessage({ type: "cv-editor-ready", count: doc.querySelectorAll("img[data-cvimg]").length }, "*");
+  setToolClass();
+  // Le moteur de pagination rend une copie de mesure de chaque bloc dans un
+  // conteneur posé à left:-99999px. Les compter doublerait le total annoncé et
+  // promettrait des cibles que personne ne peut cliquer.
+  const onScreen = (el) => {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && r.left > -10000;
+  };
+  const countVisible = (sel) => [...doc.querySelectorAll(sel)].filter(onScreen).length;
+  parent.postMessage({
+    type: "cv-editor-ready",
+    count: countVisible("img[data-cvimg]"),
+    texts: countVisible("[data-cvtext],[data-cvcls]"),
+  }, "*");
 })();
