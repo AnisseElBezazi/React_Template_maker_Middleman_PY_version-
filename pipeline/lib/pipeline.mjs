@@ -16,6 +16,7 @@ import { generateSampleCvData } from "../generate_sample_from_extra_config.mjs";
 import { generateDiffImage } from "../diff_image.mjs";
 import { addGridOverlay } from "../grid_overlay.mjs";
 import { auditJsx } from "../audit_jsx.mjs";
+import { addTextSafety } from "../add_text_safety.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PIPELINE_ROOT = path.resolve(__dirname, "..");
@@ -671,6 +672,19 @@ export async function runPipeline({
     let jsxCurrent = fs.readFileSync(finalPath, "utf-8");
     let changed = false;
     const notes = [];
+
+    // --- Composant 0 : sécurité de débordement de texte ---
+    // Le rendu est calibré sur les données d'exemple ; avec du contenu client
+    // plus long, deux débordements distincts apparaissent -- la boîte sort de
+    // son parent (enfant d'un flex non étiré, dimensionné sur son contenu) et
+    // le texte sort de sa boîte (chaîne sans espace : email, URL, mot long).
+    // Voir add_text_safety.mjs. Neutre sur le rendu nominal (diff pixel = 0).
+    const safety = addTextSafety(jsxCurrent);
+    if (safety.count > 0) {
+      jsxCurrent = safety.jsx;
+      changed = true;
+      notes.push(`débordement texte : max-w-full/break-words ajoutés sur ${safety.count} éléments`);
+    }
 
     const rootFontMatch = jsxCurrent.match(/fontSize:\s*containerWidth\s*\?\s*`\$\{\(containerWidth\s*\*\s*\(([\d.]+)\s*\/\s*CANVAS_W\)\)/);
     const rootFontPx = rootFontMatch ? parseFloat(rootFontMatch[1]) : null;
