@@ -7,11 +7,12 @@ tags Jinja bruts ({{ ... }} / {% ... %}) présents sur cette page -- ce sont
 les chemins de données exacts (data.personal_information.trigram, etc.) que
 le nouveau composant doit lire dans cvData, pas de texte inventé.
 
-Ne traite QUE la page demandée -- inutile de rasteriser/parser tout le
-document quand une seule page sera utilisée par la pipeline.
+Traite soit UNE page précise, soit TOUT le document (`all`) quand on veut
+laisser l'IA reproduire le template complet plutôt qu'une seule page.
 
-Usage: python3 extract.py <pdf_path> <out_dir> <page_number>
-Produit dans <out_dir>: target-<page>.png, dictionary.html, jinja_tags.json
+Usage: python3 extract.py <pdf_path> <out_dir> <page_number|all>
+Produit dans <out_dir>: target-<page>.png (une par page traitée),
+dictionary.html (couvrant toutes les pages traitées), jinja_tags.json
 """
 import json
 import re
@@ -31,7 +32,7 @@ from PIL import Image  # noqa: E402
 MIN_EXTRACTED_IMAGE_SIZE = 10
 
 
-def extract_embedded_images(pdf_path, out_dir, page):
+def extract_embedded_images(pdf_path, out_dir, page, start_index=0):
     """Les images de fond/logos ne doivent pas être inventées ni remplacées
     par un placeholder : on les extrait telles quelles depuis le PDF
     (pdfimages, poppler) et le composant généré doit les réutiliser. Un
@@ -78,11 +79,19 @@ def extract_embedded_images(pdf_path, out_dir, page):
                 i += 1
 
             if img.width >= MIN_EXTRACTED_IMAGE_SIZE and img.height >= MIN_EXTRACTED_IMAGE_SIZE:
-                idx = len(extracted) + 1
+                idx = start_index + len(extracted) + 1
                 out_path = out_dir / f"extracted-{idx}.png"
                 img.save(out_path)
                 extracted.append({"path": str(out_path), "width": img.width, "height": img.height})
         return extracted
+
+
+def pdf_page_count(pdf_path):
+    result = subprocess.run(["pdfinfo", str(pdf_path)], capture_output=True, text=True)
+    for line in result.stdout.splitlines():
+        if line.startswith("Pages:"):
+            return int(line.split(":", 1)[1].strip())
+    raise RuntimeError("Impossible de lire le nombre de pages du PDF.")
 
 
 def _find_tags(text):
@@ -122,32 +131,52 @@ def extract_jinja_tags(pdf_path, page):
 def main():
     pdf_path = Path(sys.argv[1])
     out_dir = Path(sys.argv[2])
-    page = int(sys.argv[3])
+    page_arg = sys.argv[3]
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # `all` = reproduire le template ENTIER (toutes les pages du PDF) plutôt
+    # qu'une seule. Le reste du script est écrit en termes d'un intervalle
+    # [first_page, last_page] : le cas mono-page n'est que l'intervalle d'une
+    # seule page, et se comporte exactement comme avant.
+    if str(page_arg).lower() == "all":
+        first_page, last_page = 1, pdf_page_count(pdf_path)
+    else:
+        first_page = last_page = int(page_arg)
+    pages = list(range(first_page, last_page + 1))
 
     pdf_bytes = pdf_path.read_bytes()
 
-    # Rendu cible : uniquement la page demandée, fidèle à un vrai lecteur PDF.
-    # Fait EN PREMIER : sa largeur en pixels sert de référence d'échelle pour
+    # Rendu cible : les pages demandées, fidèles à un vrai lecteur PDF.
+    # Fait EN PREMIER : la largeur en pixels sert de référence d'échelle pour
     # tout le reste (voir plus bas).
     result = subprocess.run(
-        ["pdftoppm", "-png", "-r", "150", "-f", str(page), "-l", str(page), str(pdf_path), str(out_dir / "target")],
+        ["pdftoppm", "-png", "-r", "150", "-f", str(first_page), "-l", str(last_page),
+         str(pdf_path), str(out_dir / "target")],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
         raise RuntimeError(f"pdftoppm a échoué: {result.stderr.strip()}")
-    targets = sorted(out_dir.glob("target*.png"))
+    targets = sorted(out_dir.glob("target-*.png"))
     if not targets:
-        raise RuntimeError(f"pdftoppm n'a produit aucune image pour la page {page}.")
+        raise RuntimeError(f"pdftoppm n'a produit aucune image pour les pages {first_page}-{last_page}.")
     target_width = Image.open(targets[0]).width
 
-    # Tags Jinja bruts de cette page uniquement -- rien d'autre. Au passage,
-    # ça nous donne la largeur de page que pdftohtml produit à son zoom par
-    # défaut (~108dpi), qu'on compare à celle de la cible (150dpi) pour
-    # calculer le zoom exact à appliquer au dictionnaire de style ci-dessous
-    # -- sans ça, ses tailles de police/positions sont toutes décalées d'un
-    # facteur constant (~1.39x) par rapport à l'image que l'IA regarde.
-    jinja_tags, default_pdftohtml_width = extract_jinja_tags(pdf_path, page)
+    # Tags Jinja bruts des pages traitées. Au passage, ça nous donne la largeur
+    # de page que pdftohtml produit à son zoom par défaut (~108dpi), qu'on
+    # compare à celle de la cible (150dpi) pour calculer le zoom exact à
+    # appliquer au dictionnaire de style ci-dessous -- sans ça, ses tailles de
+    # police/positions sont toutes décalées d'un facteur constant (~1.39x) par
+    # rapport à l'image que l'IA regarde.
+    jinja_tags, seen = [], set()
+    default_pdftohtml_width = None
+    for page in pages:
+        tags, width = extract_jinja_tags(pdf_path, page)
+        if default_pdftohtml_width is None:
+            default_pdftohtml_width = width
+        for tag in tags:
+            if tag not in seen:
+                seen.add(tag)
+                jinja_tags.append(tag)
     (out_dir / "jinja_tags.json").write_text(json.dumps(jinja_tags, ensure_ascii=False, indent=2), encoding="utf-8")
     # pdftohtml's own default zoom is 1.5 (not 1) -- the ratio must scale
     # relative to that, not replace it outright.
@@ -155,13 +184,19 @@ def main():
     zoom = PDFTOHTML_DEFAULT_ZOOM * (target_width / default_pdftohtml_width)
 
     # Dictionnaire de style : le HTML produit par le convertisseur existant,
-    # limité à la page ciblée, à la MÊME échelle que l'image cible.
-    dictionary_html = pdf_to_html(pdf_bytes, first_page=page, last_page=page, zoom=zoom)
+    # limité aux pages ciblées, à la MÊME échelle que les images cibles.
+    dictionary_html = pdf_to_html(pdf_bytes, first_page=first_page, last_page=last_page, zoom=zoom)
     (out_dir / "dictionary.html").write_text(dictionary_html, encoding="utf-8")
 
-    # Images intégrées réelles de cette page (photos de fond, logos) --
-    # jamais inventées, jamais un placeholder : ce sont les vrais fichiers.
-    extracted_images = extract_embedded_images(pdf_path, out_dir, page)
+    # Images intégrées réelles (photos de fond, logos) -- jamais inventées,
+    # jamais un placeholder : ce sont les vrais fichiers. Les indices se
+    # poursuivent d'une page à l'autre pour qu'une image de la page 2
+    # n'écrase pas celle de la page 1.
+    extracted_images = []
+    for page in pages:
+        extracted_images.extend(
+            extract_embedded_images(pdf_path, out_dir, page, start_index=len(extracted_images))
+        )
     (out_dir / "extracted_images.json").write_text(
         json.dumps(extracted_images, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -169,7 +204,9 @@ def main():
     print("DICTIONARY:" + str(out_dir / "dictionary.html"))
     print("JINJA_TAGS:" + str(out_dir / "jinja_tags.json"))
     print("EXTRACTED_IMAGES:" + str(out_dir / "extracted_images.json"))
-    print("TARGET:" + str(targets[0]))
+    print("PAGES:" + json.dumps(pages))
+    for target in targets:
+        print("TARGET:" + str(target))
 
 
 if __name__ == "__main__":
