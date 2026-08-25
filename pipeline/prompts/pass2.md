@@ -28,7 +28,7 @@ Instructions -- fais les étapes DANS CET ORDRE, n'improvise pas un résumé pos
 2. Corrige le JSX en conséquence pour CHAQUE écart listé à l'étape 1. Remplace toute couleur/taille approximative par la valeur exacte trouvée dans le dictionnaire HTML. Vérifie attentivement les couleurs de fond (les rectangles colorés sous le texte) : si tu n'as pas réussi à trouver la couleur exacte, découpe ce fond via `EXTRA_IMAGES`.
 3. Si tu as tenté de dessiner une forme vectorielle (cercle, ligne, icône, géométrie complexe) en CSS pur (ce qui est FORMELLEMENT INTERDIT), NE LE LAISSE PAS EN L'ÉTAT : réserve-lui un `import xxx from '@/images/cv-templates/<nom-template>/extracted-N.png'` (nouvel index) et ajoute, après le JSX et hors bloc ```, une ligne EXTRA_IMAGES suivie du tableau JSON de sa zone en pixels dans l'image CIBLE (grille comprise, mêmes coordonnées) -- même format qu'en passe 1 :
 EXTRA_IMAGES:[{"index": 10, "x": 1050, "y": 15, "width": 90, "height": 70}]
-4. Respecte toujours les règles strictes de la passe 1 (pas de texte codé en dur, data-block-id partout, cvData?. partout, pas de `max-w-*` sur le conteneur racine).
+4. Respecte toujours les règles strictes de la passe 1 (pas de texte codé en dur, data-block-id partout, cvData?. partout, pas de `max-w-*` sur le conteneur racine, texte qui revient à la ligne sans déborder -- `max-w-full`/`break-words` sur les éléments de texte, ne les retire pas s'ils sont déjà là).
 
 - RAPPEL VITAL AVANT DE GÉNÉRER :
   1. As-tu laissé un cercle, une ligne, ou une forme dessinée en CSS ? SI OUI, ARRÊTE IMMÉDIATEMENT. Retire le CSS et demande une découpe via `EXTRA_IMAGES`.
