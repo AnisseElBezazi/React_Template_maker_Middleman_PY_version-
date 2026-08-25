@@ -5,7 +5,9 @@
 // Étape 2 (3 passes Claude avec feedback visuel via render.mjs/Puppeteer)
 // Étape 3 (retourne le .jsx final + toutes les captures intermédiaires)
 
+import dotenv from "dotenv";
 import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { spawnSync } from "child_process";
 import fs from "fs";
 import path from "path";
@@ -13,12 +15,35 @@ import { fileURLToPath } from "url";
 import { generateSampleCvData } from "../generate_sample_from_extra_config.mjs";
 import { generateDiffImage } from "../diff_image.mjs";
 import { addGridOverlay } from "../grid_overlay.mjs";
+import { auditJsx } from "../audit_jsx.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PIPELINE_ROOT = path.resolve(__dirname, "..");
 const PROJECT_ROOT = path.resolve(PIPELINE_ROOT, "..");
+dotenv.config();
+dotenv.config({ path: path.join(PIPELINE_ROOT, ".env") });
+dotenv.config({ path: path.join(PROJECT_ROOT, ".env") });
 const TEMPLATES_ROOT = path.join(PROJECT_ROOT, "templates copy");
-const MODEL = "claude-sonnet-5";
+// Kimi K3 (Moonshot) expose une API compatible OpenAI : on bascule de client
+// selon le modèle choisi, sans toucher au reste de la pipeline.
+// Kimi K3 est accessible chez plusieurs fournisseurs, avec des identifiants
+// de modèle ET des endpoints différents -- une clé de l'un ne fonctionne pas
+// chez l'autre (erreur 401). Les deux configurations connues :
+//   Moonshot (platform.kimi.ai) : "kimi-k3"            + api.moonshot.ai/v1
+//   Baseten                      : "moonshotai/Kimi-K3" + inference.baseten.co/v1
+const MODEL = "kimi-k3";
+const IS_MOONSHOT = MODEL.toLowerCase().includes("kimi");
+const MOONSHOT_BASE_URL = "https://api.moonshot.ai/v1";
+// Tarifs par million de tokens, pour estimer le coût réel : les figer sur un
+// seul modèle sous-estimait la facture dès qu'on en changeait.
+const PRICING = {
+  "claude-opus-5": { in: 5, out: 25 },
+  "claude-sonnet-5": { in: 3, out: 15 },
+  "claude-fable-5": { in: 10, out: 50 },
+  "kimi-k3": { in: 3, out: 15 },
+  "moonshotai/Kimi-K3": { in: 3, out: 15 },
+};
+const RATE = PRICING[MODEL] ?? PRICING["claude-sonnet-5"];
 
 function pngDimensions(pngPath) {
   const buf = fs.readFileSync(pngPath);
@@ -31,7 +56,14 @@ function readPromptTemplate(name) {
 
 function extractCode(text) {
   const fenced = text.match(/```(?:jsx|javascript|js)?\n([\s\S]*?)```/);
-  return (fenced ? fenced[1] : text).trim();
+  let code = (fenced ? fenced[1] : text).trim();
+  // Les lignes de déclarationattachées au JSX (EXTRA_IMAGES, ASSETS) sont lues
+  // séparément depuis la réponse brute ; laissées dans le fichier, elles le
+  // rendent invalide. `EXTRA_IMAGES:[...]` passait par chance (JS y voit une
+  // étiquette suivie d'un tableau), mais `ASSETS:{"clé": 1}` est une erreur
+  // de syntaxe franche.
+  code = code.replace(/^\s*(?:EXTRA_IMAGES|ASSETS)\s*:\s*[[{][\s\S]*?[\]}]\s*;?\s*$/gm, "").trim();
+  return code;
 }
 
 /** Échoue vite avec un message clair si la réponse extraite n'a manifestement
@@ -95,8 +127,31 @@ function cropExtraImages(rawResponseText, targetPath, outDir, pythonBin) {
     const outPath = path.join(outDir, `extracted-${index}.png`);
     const result = spawnSync(pythonBin, [
       path.join(PIPELINE_ROOT, "crop_image.py"), sourcePath, String(x), String(y), String(w), String(h), outPath,
+      // Source de repli, utilisée UNIQUEMENT si la découpe ressort blanche :
+      // certaines icônes du PDF sont des glyphes de texte (un ☎ dans une
+      // police de symboles), absents du calque décor. Un aplat de couleur,
+      // lui, est du contenu légitime et reste pris dans le calque -- c'est
+      // ce que distingue is_blank() dans crop_image.py.
+      targetPath,
     ], { encoding: "utf-8" });
     if (result.status !== 0) continue;
+  }
+}
+
+/** Correspondance déclarée par le modèle entre ses clés d'assets et les
+ * images extraites (`ASSETS:{"page_bg": 1, ...}`). Écrite à côté du JSX pour
+ * que le rendu puisse construire la prop `assets` -- sans elle, le composant
+ * s'afficherait sans aucune image, sans que rien ne le signale. */
+function saveAssetsMap(rawResponseText, outDir) {
+  const match = rawResponseText.match(/ASSETS:\s*(\{[\s\S]*?\})/);
+  if (!match) return null;
+  try {
+    const map = JSON.parse(match[1]);
+    const file = path.join(outDir, "assets-map.json");
+    fs.writeFileSync(file, JSON.stringify(map, null, 2));
+    return map;
+  } catch {
+    return null;
   }
 }
 
@@ -111,7 +166,9 @@ export async function runPipeline({
 }) {
   if (!fs.existsSync(pdfPath))
     throw new Error(`PDF introuvable: ${pdfPath}`);
-  if (!process.env.ANTHROPIC_API_KEY)
+  if (IS_MOONSHOT && !process.env.MOONSHOT_API_KEY)
+    throw new Error("MOONSHOT_API_KEY manquante. Ajoute-la dans pipeline/.env (modèle actuel : " + MODEL + ").");
+  if (!IS_MOONSHOT && !process.env.ANTHROPIC_API_KEY)
     throw new Error("ANTHROPIC_API_KEY manquante. Crée pipeline/.env avec ANTHROPIC_API_KEY=sk-...");
 
   fs.mkdirSync(outDir, { recursive: true });
@@ -192,11 +249,21 @@ export async function runPipeline({
   const extractedImagesText = topImages.length
     ? topImages.map((img, i) => `extracted-${extractedImages.indexOf(img) + 1} : ${img.width}x${img.height}px`).join("\n")
     : "(aucune image intégrée trouvée sur cette page)";
+  // Version réduite POUR L'ENVOI uniquement : ces images servent à être
+  // reconnues, pas mesurées, et le coût vision est proportionnel au nombre
+  // de pixels. Les fichiers réellement utilisés par le composant restent en
+  // pleine résolution. On annonce quand même les dimensions d'origine, dont
+  // l'IA a besoin pour calculer la bonne taille d'affichage.
+  const visionDir = path.join(outDir, "vision");
+  fs.mkdirSync(visionDir, { recursive: true });
   const extractedImageBlocks = topImages.flatMap((img) => {
     const idx = extractedImages.indexOf(img) + 1;
+    const small = path.join(visionDir, `extracted-${idx}.png`);
+    const shrunk = spawnSync(pythonBin, [path.join(PIPELINE_ROOT, "shrink_for_vision.py"), img.path, small], { encoding: "utf-8" });
+    const sendPath = shrunk.status === 0 && fs.existsSync(small) ? small : img.path;
     return [
-      { type: "text", text: `Image extraite extracted-${idx} (${img.width}x${img.height}px) :` },
-      { type: "image", source: { type: "base64", media_type: "image/png", data: fs.readFileSync(img.path).toString("base64") } },
+      { type: "text", text: `Image extraite extracted-${idx} (dimensions réelles ${img.width}x${img.height}px) :` },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: fs.readFileSync(sendPath).toString("base64") } },
     ];
   });
 
@@ -230,20 +297,121 @@ export async function runPipeline({
     cache_control: { type: "ephemeral" },
   };
 
-  const anthropic = new Anthropic();
+  const anthropic = IS_MOONSHOT ? null : new Anthropic();
+  const moonshot = IS_MOONSHOT
+    ? new OpenAI({
+        apiKey: process.env.MOONSHOT_API_KEY,
+        baseURL: MOONSHOT_BASE_URL,
+        // 40 minutes : Kimi produit ~48 tokens/s, et une passe 1 avec
+        // réflexion approfondie dépasse régulièrement 20 minutes -- un run
+        // a déjà été coupé alors qu'il finissait d'écrire son code.
+        timeout: 40 * 60 * 1000,
+      })
+    : null;
+
+  /** Traduit les blocs de contenu Anthropic vers le format OpenAI attendu par
+   * l'API Moonshot : le texte reste du texte, une image base64 devient une
+   * data URL. `cache_control` n'a pas d'équivalent et disparaît -- la mise en
+   * cache est automatique côté Moonshot. */
+  function toOpenAIContent(blocks) {
+    return blocks.map((b) => {
+      if (b.type === "image") {
+        return {
+          type: "image_url",
+          image_url: { url: `data:${b.source.media_type};base64,${b.source.data}` },
+        };
+      }
+      return { type: "text", text: b.text };
+    });
+  }
+
+  async function callMoonshot(step, content, maxTokens) {
+    const stream = await moonshot.chat.completions.create({
+      model: MODEL,
+      max_tokens: maxTokens,
+      stream: true,
+      stream_options: { include_usage: true },
+      messages: [{ role: "user", content: toOpenAIContent(content) }],
+    });
+    let textBuf = "";
+    let thinkingBuf = "";
+    let usage = null;
+    // Pourquoi la génération s'est arrêtée : "length" = plafond de tokens
+    // atteint, "stop" = le modèle a fini de lui-même. Sans cette information,
+    // une réponse tronquée et une réponse vide se ressemblent.
+    let finishReason = null;
+    for await (const chunk of stream) {
+      if (chunk.usage) usage = chunk.usage;
+      if (chunk.choices?.[0]?.finish_reason) finishReason = chunk.choices[0].finish_reason;
+      const delta = chunk.choices?.[0]?.delta;
+      if (!delta) continue;
+      // Ce modèle sépare son raisonnement de sa réponse : on peut donc
+      // afficher les deux distinctement, comme avec Claude.
+      if (delta.reasoning_content) {
+        thinkingBuf += delta.reasoning_content;
+        onStream(step, "thinking", thinkingBuf.slice(-4000));
+      }
+      if (delta.content) {
+        textBuf += delta.content;
+        onStream(step, "text", textBuf.slice(-4000));
+      }
+    }
+    const cached = usage?.prompt_tokens_details?.cached_tokens ?? 0;
+    return {
+      text: textBuf,
+      finishReason,
+      inputTokens: (usage?.prompt_tokens ?? 0) - cached,
+      outputTokens: usage?.completion_tokens ?? 0,
+      cacheRead: cached,
+      cacheWrite: 0,
+    };
+  }
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let totalCacheReadTokens = 0;
   let totalCacheWriteTokens = 0;
+  const perPassUsage = [];
 
-  async function callClaude(step, content, maxTokens = 64000) {
-    onProgress(step, "Appel à Claude...");
+  async function callClaude(step, content, { maxTokens = 64000, effort = "high" } = {}) {
+    onProgress(step, `Appel à ${MODEL}${IS_MOONSHOT ? "" : ` (effort ${effort})`}...`);
+
+    if (IS_MOONSHOT) {
+      const r = await callMoonshot(step, content, maxTokens);
+      totalInputTokens += r.inputTokens;
+      totalOutputTokens += r.outputTokens;
+      totalCacheReadTokens += r.cacheRead;
+      perPassUsage.push({
+        step, effort: "n/a",
+        inputTokens: r.inputTokens, outputTokens: r.outputTokens,
+        cacheReadTokens: r.cacheRead, cacheWriteTokens: 0,
+        costUsd: Number(((r.inputTokens * RATE.in + r.outputTokens * RATE.out + r.cacheRead * 0.3) / 1e6).toFixed(4)),
+      });
+      onProgress(step, `Tokens: +${r.inputTokens} in / +${r.outputTokens} out (~$${perPassUsage.at(-1).costUsd}) [fin: ${r.finishReason ?? "?"}]`);
+      if (r.finishReason === "length") {
+        throw new Error(
+          `Passe ${step} : réponse coupée au plafond de ${r.outputTokens} tokens de sortie (finish_reason="length"). `
+          + `Le modèle n'a pas eu la place d'écrire le code après avoir réfléchi. `
+          + `Ce n'est pas un dépassement de délai : l'API a bien répondu.`
+        );
+      }
+      return r.text;
+    }
+
     // En non-streaming, la réflexion étendue (activée par défaut sur Sonnet 5,
     // pas de budget_tokens séparable) peut consommer tout le max_tokens sans
     // laisser de place au JSX final -- déjà vu produire un fichier vide malgré
     // "usage.output_tokens" au plafond. Le streaming évite aussi les timeouts
     // HTTP sur un aussi gros max_tokens (recommandation officielle du SDK).
-    const stream = anthropic.messages.stream({ model: MODEL, max_tokens: maxTokens, messages: [{ role: "user", content }] });
+    // `effort` pilote la profondeur de réflexion, donc l'essentiel du coût :
+    // la réflexion est facturée en tokens de SORTIE (15 $/M), et une passe
+    // peut à elle seule en consommer des dizaines de milliers. Les images,
+    // elles, pèsent ~20 000 tokens d'entrée par run, soit environ 0,06 $.
+    const stream = anthropic.messages.stream({
+      model: MODEL,
+      max_tokens: maxTokens,
+      output_config: { effort },
+      messages: [{ role: "user", content }],
+    });
     let thinkingBuf = "";
     let textBuf = "";
     for await (const event of stream) {
@@ -263,9 +431,23 @@ export async function runPipeline({
     const cacheWrite = msg.usage.cache_creation_input_tokens || 0;
     totalCacheReadTokens += cacheRead;
     totalCacheWriteTokens += cacheWrite;
+    // Détail par passe : sans ça on optimise à l'aveugle, en devinant
+    // laquelle coûte cher.
+    perPassUsage.push({
+      step,
+      effort,
+      inputTokens: msg.usage.input_tokens,
+      outputTokens: msg.usage.output_tokens,
+      cacheReadTokens: cacheRead,
+      cacheWriteTokens: cacheWrite,
+      costUsd: Number((
+        (msg.usage.input_tokens * RATE.in + msg.usage.output_tokens * RATE.out
+          + cacheWrite * RATE.in * 1.25 + cacheRead * RATE.in * 0.1) / 1e6
+      ).toFixed(4)),
+    });
     onProgress(
       step,
-      `Tokens: +${msg.usage.input_tokens} in / +${msg.usage.output_tokens} out` +
+      `Tokens: +${msg.usage.input_tokens} in / +${msg.usage.output_tokens} out (~$${perPassUsage.at(-1).costUsd})` +
         (cacheRead || cacheWrite ? ` (cache: +${cacheWrite} écrits, +${cacheRead} lus)` : "") +
         ` (cumulé: ${totalInputTokens} in / ${totalOutputTokens} out)`
     );
@@ -311,12 +493,13 @@ export async function runPipeline({
     { type: "text", text: pass1After },
     ...backgroundImageBlocks,
     ...extractedImageBlocks,
-  ]);
+  ], { effort: "high" }); // génération complète : c'est la passe qui mérite l'effort
   const jsx1 = extractCode(jsx1Raw);
   assertValidJsx(jsx1, "1");
   const jsx1Path = path.join(outDir, "attempt1.jsx");
   fs.writeFileSync(jsx1Path, jsx1);
   cropExtraImages(jsx1Raw, targetPath, outDir, pythonBin);
+  saveAssetsMap(jsx1Raw, outDir);
   placeExtractedImages(jsx1, outDir);
   const png1Path = path.join(outDir, "attempt1.png");
   onProgress("pass1", "Rendu de la tentative 1...");
@@ -365,12 +548,15 @@ export async function runPipeline({
     .replace("{{JSX}}", jsx1)
     .replace("{{DICTIONARY}}", dictionaryCompact)
     .replace(/\{\{CANVAS_SIZE\}\}/g, `${width} x ${height}`);
-  const jsx2Raw = await callClaude("pass2", [...pass2ImageBlocks, { type: "text", text: pass2Prompt }]);
+  // Correction guidée par des repères visuels explicites (grille + diff) :
+  // l'analyse est cadrée, elle n'a pas besoin de l'effort maximal.
+  const jsx2Raw = await callClaude("pass2", [...pass2ImageBlocks, { type: "text", text: pass2Prompt }], { effort: "high" });
   const jsx2 = extractCode(jsx2Raw);
   assertValidJsx(jsx2, "2");
   const jsx2Path = path.join(outDir, "attempt2.jsx");
   fs.writeFileSync(jsx2Path, jsx2);
   cropExtraImages(jsx2Raw, targetPath, outDir, pythonBin);
+  saveAssetsMap(jsx2Raw, outDir);
   placeExtractedImages(jsx2, outDir);
   const png2Path = path.join(outDir, "attempt2.png");
   onProgress("pass2", "Rendu de la tentative 2...");
@@ -378,17 +564,35 @@ export async function runPipeline({
   passes.push({ name: "pass2", label: "Passe 2 -- diff visuel", jsxPath: jsx2Path, pngPath: png2Path, htmlPath: png2Path.replace(/\.png$/i, ".html") });
   onProgress("pass2", "OK");
 
-  // --- Passe 3 : audit sécurité / câblage ---
-  const pass3Prompt = readPromptTemplate("pass3.md").replace("{{JSX}}", jsx2);
-  const jsx3Raw = await callClaude("pass3", [{ type: "text", text: pass3Prompt }]);
-  const jsx3 = extractCode(jsx3Raw);
-  assertValidJsx(jsx3, "3");
+  // --- Passe 3 : audit de câblage ---
+  // Un contrôle algorithmique passe d'abord : s'il ne trouve rien, la passe
+  // Claude est purement et simplement sautée. C'est la passe la plus chère
+  // par rapport à ce qu'elle change (mesuré : 0,02 % des pixels), puisqu'elle
+  // regénère tout le JSX en tokens de sortie.
+  const findings = auditJsx(jsx2);
   const jsx3Path = path.join(outDir, "attempt3.jsx");
-  fs.writeFileSync(jsx3Path, jsx3);
-  placeExtractedImages(jsx3, outDir);
   const png3Path = path.join(outDir, "attempt3.png");
-  onProgress("pass3", "Rendu de la tentative 3...");
-  render(jsx3Path, png3Path);
+  let jsx3 = jsx2;
+
+  if (!findings.length) {
+    onProgress("pass3", "Contrôle automatique : aucun problème de câblage -- passe Claude évitée.");
+    fs.copyFileSync(jsx2Path, jsx3Path);
+    fs.copyFileSync(png2Path, png3Path);
+    const html2 = png2Path.replace(/\.png$/i, ".html");
+    if (fs.existsSync(html2)) fs.copyFileSync(html2, png3Path.replace(/\.png$/i, ".html"));
+  } else {
+    onProgress("pass3", `Contrôle automatique : ${findings.length} point(s) à corriger -- ${findings.map((f) => f.rule).join(", ")}`);
+    const pass3Prompt = readPromptTemplate("pass3.md")
+      .replace("{{JSX}}", jsx2)
+      .replace("{{FINDINGS}}", findings.map((f, i) => `${i + 1}. [${f.rule}] ${f.message}`).join("\n"));
+    const jsx3Raw = await callClaude("pass3", [{ type: "text", text: pass3Prompt }], { effort: "low" });
+    jsx3 = extractCode(jsx3Raw);
+    assertValidJsx(jsx3, "3");
+    fs.writeFileSync(jsx3Path, jsx3);
+    placeExtractedImages(jsx3, outDir);
+    onProgress("pass3", "Rendu de la tentative 3...");
+    render(jsx3Path, png3Path);
+  }
   passes.push({ name: "pass3", label: "Passe 3 -- audit", jsxPath: jsx3Path, pngPath: png3Path, htmlPath: png3Path.replace(/\.png$/i, ".html") });
   onProgress("pass3", "OK");
 
@@ -579,7 +783,7 @@ export async function runPipeline({
   onProgress("done", "Terminé.");
 
   return {
-    outDir, targetPath, dictionaryPath, width, height, passes,
+    outDir, targetPath, dictionaryPath, width, height, passes, perPassUsage,
     totalInputTokens, totalOutputTokens, totalCacheReadTokens, totalCacheWriteTokens,
   };
 }
