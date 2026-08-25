@@ -69,6 +69,9 @@ const cvSmartAliasPlugin = {
       const realPath = path.join(IMAGES_ROOT, rel);
       if (fs.existsSync(realPath))
         return { path: realPath };
+      const outDirPath = path.join(path.dirname(jsxAbs), path.basename(args.path));
+      if (fs.existsSync(outDirPath))
+        return { path: outDirPath };
       return { path: args.path, namespace: "cv-smart-image-stub" };
     });
     build.onLoad({ filter: /.*/, namespace: "cv-smart-image-stub" }, (args) => ({
@@ -98,7 +101,7 @@ const cvSmartAliasPlugin = {
         // <link>, qui commencent par les mêmes lettres.
         let t = 0;
         contents = contents.replace(
-          /<(p|h[1-6]|li)([\s>])/g,
+          /<(p|h[1-6]|li|div)([\s>])/g,
           (_m, tag, after) => `<${tag} data-cvtext="${t++}"${after === ">" ? ">" : " "}`
         );
       } else if (/[\/\\]engine[\/\\]/.test(args.path)) {
@@ -107,7 +110,7 @@ const cvSmartAliasPlugin = {
         // style vient d'une classe passée par le composant généré. On les
         // marque donc pour qu'ils soient sélectionnables : l'ajustement ira
         // modifier cette classe dans le composant, pas le moteur.
-        contents = contents.replace(/<(p|h[1-6]|li)([\s>])/g,
+        contents = contents.replace(/<(p|h[1-6]|li|div)([\s>])/g,
           (_m, tag, after) => `<${tag} data-cvcls="1"${after === ">" ? ">" : " "}`);
       }
       return { contents, loader: "jsx" };
@@ -126,7 +129,12 @@ const cvSmartAliasPlugin = {
 };
 
 function compileTailwind() {
-  const outCss = path.join(__dirname, "out", ".tailwind-generated.css");
+  // Chemin UNIQUE par rendu : plusieurs rendus peuvent tourner en parallèle
+  // (traitement de templates par lots). Avec un fichier partagé, l'un lisait
+  // le CSS pendant que l'autre le réécrivait -- classes manquantes, images à
+  // leur taille naturelle, mises en page cassées de façon intermittente et
+  // très difficile à relier à sa cause.
+  const outCss = path.join(__dirname, "out", `.tailwind-${process.pid}-${Date.now()}.css`);
   fs.mkdirSync(path.dirname(outCss), { recursive: true });
   const result = spawnSync(
     path.join(__dirname, "node_modules", ".bin", "tailwindcss"),
@@ -138,7 +146,11 @@ function compileTailwind() {
       // out/ (fichier temporaire, test ponctuel) se retrouvait rendu sans
       // aucune de ses classes utilitaires -- les images reprenaient alors
       // leur taille naturelle, ce qui ressemble à un bug de mise en page.
-      "--content", `${path.join(__dirname, "out")}/**/*.{jsx,js},${TEMPLATES_ROOT}/**/*.{jsx,js},${jsxAbs}`,
+      // On ne scanne QUE le composant rendu et le moteur partagé. Scanner
+      // tout out/ faisait relire les JSX de chaque run précédent : temps de
+      // compilation croissant à mesure que les runs s'accumulent, et CSS
+      // pollué par les classes des autres templates.
+      "--content", `${jsxAbs},${TEMPLATES_ROOT}/**/*.{jsx,js}`,
       "--minify",
     ],
     { encoding: "utf-8", cwd: __dirname }
@@ -147,11 +159,36 @@ function compileTailwind() {
     console.error("TAILWIND_ERROR:" + (result.stderr || result.stdout));
     return "";
   }
-  return fs.readFileSync(outCss, "utf-8");
+  const css = fs.readFileSync(outCss, "utf-8");
+  try { fs.unlinkSync(outCss); } catch { /* fichier temporaire, sans importance */ }
+  return css;
 }
 
 const sharedCssPath = path.join(TEMPLATES_ROOT, "visianSmartCv.css");
 const sharedCss = fs.existsSync(sharedCssPath) ? fs.readFileSync(sharedCssPath, "utf-8") : "";
+
+// Prop `assets` de l'aperçu : les images extraites du PDF, converties en
+// data URL et indexées par les clés que le composant a déclarées dans
+// `assets-map.json`. Sans ça, un composant qui lit `assets.page_bg`
+// s'afficherait sans aucune image.
+function buildAssets() {
+  const mapFile = path.join(path.dirname(jsxAbs), "assets-map.json");
+  if (!fs.existsSync(mapFile)) return {};
+  let map;
+  try {
+    map = JSON.parse(fs.readFileSync(mapFile, "utf-8"));
+  } catch {
+    return {};
+  }
+  const out = {};
+  for (const [key, index] of Object.entries(map)) {
+    const file = path.join(path.dirname(jsxAbs), `extracted-${index}.png`);
+    if (!fs.existsSync(file)) continue;
+    out[key] = `data:image/png;base64,${fs.readFileSync(file).toString("base64")}`;
+  }
+  return out;
+}
+const previewAssets = buildAssets();
 
 const entryContents = `
 import React from "react";
@@ -160,7 +197,7 @@ import CvPage from ${JSON.stringify(jsxAbs)};
 import cvData from ${JSON.stringify(dataAbs)};
 
 const root = createRoot(document.getElementById("root"));
-root.render(React.createElement(CvPage, { cvData, pageWidth: ${width}, pageHeight: ${height} }));
+root.render(React.createElement(CvPage, { cvData, assets: ${JSON.stringify(previewAssets)}, pageWidth: ${width}, pageHeight: ${height} }));
 `;
 
 const tmpEntry = path.join(path.dirname(jsxAbs), `.entry-${Date.now()}-${Math.random().toString(36).slice(2)}.jsx`);
@@ -189,7 +226,7 @@ const tailwindCss = compileTailwind();
 // L'éditeur s'en sert pour savoir qu'un rendu ancien doit être refait :
 // sans ce marqueur, un HTML produit avant l'ajout d'un type de repère
 // laisserait l'édition correspondante silencieusement indisponible.
-const CV_TAGS_VERSION = "3";
+const CV_TAGS_VERSION = "4";
 
 const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="cv-tags" content="${CV_TAGS_VERSION}"><style>html,body{margin:0;padding:0;}${tailwindCss}\n${sharedCss}</style></head><body><div id="root"></div><script>${bundle}</script></body></html>`;
 
