@@ -714,8 +714,8 @@ app.get("/", (_req, res) => {
           </div>
 
           <div class="field-row">
-            <label for="pageInput">Page à traiter<span class="hint">Une seule page par run.</span></label>
-            <input type="number" class="num" name="page" id="pageInput" value="1" min="1">
+            <label for="pageInput">Page à traiter<span class="hint">Un numéro de page, ou « all » pour tout le template.</span></label>
+            <input type="text" class="num" name="page" id="pageInput" value="1" pattern="[0-9]+|all|ALL" title="Un numéro de page, ou all">
           </div>
         </div>
 
@@ -847,7 +847,9 @@ app.post("/run", upload.fields([{ name: "pdf", maxCount: 1 }, { name: "extraConf
   const pdfFile = req.files?.pdf?.[0];
   if (!pdfFile) return res.status(400).send("PDF manquant.");
   const extraConfigFile = req.files?.extraConfig?.[0];
-  const pageNumber = parseInt(req.body.page || "1", 10);
+  // "all" = reproduire le template entier (toutes les pages du PDF).
+  const rawPage = String(req.body.page || "1").trim().toLowerCase();
+  const pageNumber = rawPage === "all" ? "all" : (parseInt(rawPage, 10) || 1);
 
   // extra_config peut venir soit d'un fichier uploadé, soit de JSON collé
   // dans le textarea (envoyé dans le champ caché extraConfigText) -- dans

@@ -15,7 +15,8 @@ if (!pdfArg) {
 }
 
 const pdfPath = path.resolve(pdfArg);
-const pageNumber = parseInt(pageArg || "1", 10);
+// "all" = reproduire le template entier (toutes les pages du PDF).
+const pageNumber = String(pageArg || "1").toLowerCase() === "all" ? "all" : (parseInt(pageArg || "1", 10) || 1);
 const cvDataPath = cvDataArg ? path.resolve(cvDataArg) : undefined;
 const runId = new Date().toISOString().replace(/[:.]/g, "-");
 const outDir = path.join(__dirname, "out", runId);
