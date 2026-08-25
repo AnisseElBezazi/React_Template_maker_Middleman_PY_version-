@@ -249,6 +249,33 @@ try {
   await new Promise((r) => setTimeout(r, 150));
   const root = await page.$("#root");
   await root.screenshot({ path: outPng });
+
+  // Captures PAR PAGE, en plus de la capture globale : quand on reproduit un
+  // template entier, la passe 2 doit comparer la page N du rendu à la page N
+  // de la cible, ce que la capture empilée (toutes les pages + les gouttières
+  // entre elles) ne permet pas -- le diff pixelmatch exige des dimensions
+  // identiques. Les vraies pages sont les enfants directs du conteneur qui
+  // occupent toute sa largeur : le moteur de pagination monte aussi un noeud
+  // de mesure caché, plus étroit, qu'il ne faut pas confondre avec une page.
+  const pageCount = await page.evaluate(() => {
+    const comp = document.querySelector("#root")?.firstElementChild;
+    if (!comp) return 0;
+    const full = comp.getBoundingClientRect().width;
+    let n = 0;
+    for (const child of comp.children) {
+      if (Math.abs(child.getBoundingClientRect().width - full) > 2) continue;
+      child.setAttribute("data-cv-page", String(++n));
+    }
+    return n;
+  });
+  for (let i = 1; i <= pageCount; i++) {
+    const el = await page.$(`[data-cv-page="${i}"]`);
+    if (!el) continue;
+    const pagePng = outPng.replace(/\.png$/i, `-page-${i}.png`);
+    await el.screenshot({ path: pagePng });
+    console.log("PAGE_RENDER:" + i + ":" + pagePng);
+  }
+  console.log("PAGE_COUNT:" + pageCount);
   if (errors.length) {
     console.error("RENDER_ERRORS:" + JSON.stringify(errors));
   }
