@@ -54,6 +54,22 @@ const CONTEXTUAL = {
   ],
   "experiences.technical_environment": ["Python / Azure Data Factory / Power BI / SQL Server", "Python / SQL"],
 
+  // Champs rencontrés sur les templates réels : sans entrée dédiée, le repli
+  // renvoyait le LIBELLÉ du champ ("Type de diplôme", "Compétence"), ce qui
+  // donne un aperçu où l'on ne distingue plus la donnée de son étiquette.
+  "main_experiences.name": ["Société Alpha", "Groupe Beta", "Cabinet Gamma"],
+  "main_experiences.job_title": ["Consultant Senior Data", "Chef de projet SI", "Architecte Cloud"],
+  "main_experiences.duration": ["3 ans", "2 ans", "18 mois"],
+
+  "diplomas.type": ["Master", "Licence", "BTS"],
+  "diplomas.domaine": ["Informatique", "Génie logiciel", "Réseaux"],
+  "diplomas.school": ["Université Paris-Dauphine", "École Centrale de Lyon"],
+  "diplomas.dates": ["2017 à 2019", "2014 à 2017"],
+
+  "interventions_domains.text": ["Banque et assurance", "Secteur public", "Industrie"],
+  "soft_skills.text": ["Esprit d'analyse", "Travail en équipe", "Autonomie"],
+  "skills.name": ["Langages", "Cloud", "Bases de données"],
+
   "personal_projects.name": ["Analyse de données sportives"],
   "personal_projects.job_title": ["Projet personnel"],
   "personal_projects.project": ["Application de visualisation de statistiques de course à pied connectée à l'API Strava."],
@@ -65,23 +81,34 @@ const CONTEXTUAL = {
 const KEYWORD_FALLBACKS = [
   [/\bemail\b|e-?mail/, "contact@exemple.fr"],
   [/\bphone\b|t[ée]l[ée]phone|\btel\b/, "+33 1 23 45 67 89"],
+  // "dates" au pluriel désigne presque toujours une PÉRIODE sur un CV
+  // (formation, expérience), pas une date isolée.
+  [/\bdates\b|p[ée]riode/, "2017 à 2019"],
   [/\bdate\b/, () => new Date().toLocaleDateString("fr-FR")],
   [/ann[ée]e|\byear\b|anciennet[ée]/, "5"],
+  [/dur[ée]e|duration/, "2 ans"],
+  [/niveau_anglais|english/, "Courant"],
   [/\bville\b|\bcity\b/, "Lyon"],
   [/\bpays\b|\bcountry\b/, "France"],
   // "\bfonction\b" ne matche PAS "fonctionnelles" (pas de frontière de mot
   // entre "fonction" et "nelles") -- bug déjà rencontré : "compétences
   // fonctionnelles" tombait à tort sur l'exemple de titre de poste.
   [/\btitre\b|\btitle\b|\bposte\b|\bfonction\b/, "Consultant Senior"],
-  [/\bnom\b|\bname\b/, "Exemple"],
   [/description|contexte|context|r[ée]alisation/, "Exemple de réalisation menée dans ce cadre."],
   [/[ée]cole|\bschool\b|universit[ée]|formation/, "École Exemple"],
   [/entreprise|soci[ée]t[ée]|\bcompany\b|\bclient\b/, "Entreprise Exemple"],
+  // "nom/name" arrive APRÈS les règles spécifiques : sinon "company_name" et
+  // "school_name" tombaient sur le générique au lieu de leur vraie catégorie.
+  [/nom complet|full name/, "Jeanne Martin"],
+  [/\bnom\b|\bname\b/, "Exemple"],
   [/niveau|\blevel\b/, "Courant"],
 ];
 
 function fallbackValue(dataName, displayName) {
-  const haystack = `${dataName} ${displayName || ""}`.toLowerCase();
+  // Les underscores sont remplacés par des espaces : sans ça, "full_name" ne
+  // déclenchait aucune règle (pas de frontière de mot entre "_" et "name"),
+  // et le repli renvoyait le nom du champ tel quel.
+  const haystack = `${dataName} ${displayName || ""}`.replace(/[_-]+/g, " ").toLowerCase();
   for (const [pattern, value] of KEYWORD_FALLBACKS) {
     if (pattern.test(haystack)) return typeof value === "function" ? value() : value;
   }
@@ -182,7 +209,10 @@ function ensurePath(result, dottedPath) {
     obj[leaf] = `${obj.first_name} ${obj.last_name}`;
     return;
   }
-  obj[leaf] = fallbackValue(leaf, leaf);
+  // Sinon on consulte d'abord la table des valeurs connues : elle contient
+  // par exemple personal_information.full_name, qu'ignorait ce chemin.
+  const known = CONTEXTUAL[dottedPath];
+  obj[leaf] = known && known.length ? known[0] : fallbackValue(leaf, leaf);
 }
 
 export function generateSampleCvData(extraConfig) {
