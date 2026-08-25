@@ -4,7 +4,7 @@
 //
 // Usage: node server.mjs  (puis ouvrir http://localhost:5050)
 
-import "dotenv/config";
+import dotenv from "dotenv";
 import { ZipArchive } from "archiver";
 import express from "express";
 import multer from "multer";
@@ -14,8 +14,12 @@ import { fileURLToPath } from "url";
 import { spawnSync } from "child_process";
 import { runPipeline } from "./lib/pipeline.mjs";
 import { applyImageEdits, applyTextEdits, applyClassEdits } from "./apply_image_edits.mjs";
+import { toDbFormat } from "./to_db_format.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config();
+dotenv.config({ path: path.join(__dirname, ".env") });
+dotenv.config({ path: path.join(__dirname, "..", ".env") });
 const OUT_ROOT = path.join(__dirname, "out");
 const UPLOADS_ROOT = path.join(__dirname, "uploads");
 const TEMPLATES_ROOT = path.resolve(__dirname, "..", "templates copy");
@@ -107,7 +111,9 @@ function getRun(runId) {
 }
 
 const IMAGE_IMPORT_RE = /@\/images\/cv-templates\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_-]+\.(?:png|jpe?g))/g;
-const COMPONENT_NAME_RE = /export default function (\w+)/;
+// Les deux formes possibles : `export default function X(...)` ou une
+// déclaration suivie de `export default X` en fin de fichier.
+const COMPONENT_NAME_RE = /export\s+default\s+(?:function\s+)?(\w+)/;
 
 /** Rassemble tout ce qu'il faut pour utiliser le composant généré ailleurs :
  * le .jsx final et les vraies images qu'il référence (déjà placées par
@@ -137,6 +143,7 @@ const ICON = {
   cursor: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.2 2.4 12.6 7l-4 1.6L7 12.6 3.2 2.4Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>`,
   close: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
   download: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.5v7.5m0 0L5.25 7.25M8 10l2.75-2.75M3 12.25h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  block: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2.25" y="3.25" width="11.5" height="9.5" rx="1.25" stroke="currentColor" stroke-width="1.3" stroke-dasharray="2.6 1.8"/></svg>`,
   layers: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1.75 1.75 5 8 8.25 14.25 5 8 1.75Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="m1.75 8.75 6.25 3.25 6.25-3.25" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>`,
   think: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="5.75" stroke="currentColor" stroke-width="1.3"/><circle cx="5.2" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="10.8" cy="8" r="1" fill="currentColor"/></svg>`,
   write: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M10.4 2.6 13.4 5.6 5.9 13.1l-3.4.4.4-3.4 7.5-7.5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>`,
@@ -144,6 +151,11 @@ const ICON = {
   minus: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
   plus: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
   fit: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 2.25H2.25V6M10 2.25h3.75V6M6 13.75H2.25V10M10 13.75h3.75V10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  hand: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5.25 7.5V3.9a1.15 1.15 0 0 1 2.3 0v3.1m0-.6V2.9a1.15 1.15 0 0 1 2.3 0v4.1m0-.9a1.15 1.15 0 0 1 2.3 0v1.4m-9.2-.4a1.15 1.15 0 0 0-1.2 1.15c0 .3.1.6.3.85l2.4 3.1a4.2 4.2 0 0 0 3.3 1.6h.6a4.1 4.1 0 0 0 4.1-4.1V7.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  text: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3.25h10M8 3.25v9.5M5.75 12.75h4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
+  image: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5" stroke="currentColor" stroke-width="1.3"/><circle cx="5.6" cy="6.4" r="1.1" fill="currentColor"/><path d="m2.4 11.9 3.3-3.1a1 1 0 0 1 1.4 0l2.1 2 1.3-1.2a1 1 0 0 1 1.4 0l1.8 1.7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  block: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.75 1.75v12.5M11.25 1.75v12.5M1.75 4.75h12.5M1.75 11.25h12.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>`,
+  onion: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6.1" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.9a6.1 6.1 0 0 1 0 12.2V1.9Z" fill="currentColor"/></svg>`,
   pdf: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M9.5 1.75h-5a1 1 0 0 0-1 1v10.5a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V4.25L9.5 1.75Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9.25 2v2.5h2.75" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M5.75 11.25h4.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>`,
 };
 
@@ -463,36 +475,55 @@ function layout(title, { crumb = "", status = "", actions = "", rail = "", main 
      le déplacement marchent partout -- sauf en mode édition, où la souris doit
      atteindre les éléments de la preview. */
   .board-shield { position:absolute; inset:0; z-index:2; }
-  body.editing-open .board-shield { pointer-events:none; }
-  body.editing-open.space .board-shield { pointer-events:auto; }
+  body.tool-edit .board-shield { pointer-events:none; }
+  body.tool-edit.space .board-shield { pointer-events:auto; }
+  body.tool-edit #targetPane .board-shield { pointer-events:auto; }
+  body.tool-edit .viewport { cursor:default; }
+  body.tool-edit.space .viewport { cursor:grab; }
+  body.tool-edit.space .viewport.panning { cursor:grabbing; }
   #previewPane.editing { box-shadow:var(--shadow-sheet), 0 0 0 1.5px var(--sel); }
   #previewPane.editing .frame-name { color:var(--sel); font-weight:600; }
-  body.editing-open #targetPane { opacity:.45; }
+  body.tool-edit #targetPane { opacity:.45; }
 
   /* Pastille de zoom : flotte au-dessus du plan de travail, comme les contrôles
      de vue d'un éditeur. */
-  .zoombar {
+  /* Barre d'outils flottante : elle porte le mode de travail et le cadrage,
+     les deux choses qu'on change sans arrêt en comparant deux rendus. */
+  .dock {
     position:absolute; bottom:16px; left:50%; transform:translateX(-50%);
     display:flex; align-items:center; gap:2px; padding:3px;
-    background:#fff; border:1px solid var(--line); border-radius:8px;
-    box-shadow:var(--shadow-pop); z-index:10; user-select:none;
+    background:#fff; border:1px solid var(--line); border-radius:9px;
+    box-shadow:var(--shadow-pop); z-index:10; user-select:none; max-width:calc(100% - 32px);
   }
-  .zoombar button {
-    height:26px; min-width:26px; padding:0 8px; border:none; background:transparent;
-    color:var(--tx-2); border-radius:5px; cursor:pointer; font-size:11px; font-weight:500;
+  .dock button {
+    height:28px; min-width:28px; padding:0 7px; border:none; background:transparent;
+    color:var(--tx-2); border-radius:6px; cursor:pointer; font-size:11px; font-weight:500;
     display:inline-flex; align-items:center; justify-content:center; gap:5px;
     transition:background .14s ease, color .14s ease;
   }
-  .zoombar button:hover { background:var(--hover); color:var(--tx); }
-  .zoombar .zval {
-    min-width:52px; font-family:var(--mono); font-size:11px; color:var(--tx);
+  .dock button:hover:not(:disabled) { background:var(--hover); color:var(--tx); }
+  .dock button[aria-pressed="true"] { background:var(--sel); color:#fff; }
+  .dock button[aria-pressed="true"]:hover { background:#0b86e0; color:#fff; }
+  .dock button:disabled { color:#c2c2c2; cursor:not-allowed; }
+  /* Un outil pas encore livré se signale, plutôt que de rester un bouton mort
+     dont on ne sait pas s'il est cassé. */
+  .dock button.soon { position:relative; }
+  .dock button.soon::after {
+    content:""; position:absolute; top:4px; right:4px; width:4px; height:4px;
+    border-radius:50%; background:var(--warn);
+  }
+  .dock .zval {
+    min-width:50px; font-family:var(--mono); font-size:11px; color:var(--tx);
     font-variant-numeric:tabular-nums;
   }
-  .zoombar .zsep { width:1px; height:16px; background:var(--line); margin:0 3px; }
+  .dock .zsep { width:1px; height:18px; background:var(--line); margin:0 4px; flex:none; }
   .zoomhint {
-    position:absolute; bottom:20px; right:16px; z-index:10; pointer-events:none;
-    font-size:10.5px; color:var(--tx-3); text-align:right; line-height:1.7;
+    position:absolute; bottom:60px; left:50%; transform:translateX(-50%);
+    z-index:10; pointer-events:none; white-space:nowrap;
+    font-size:10.5px; color:var(--tx-3); line-height:1.7;
+    transition:opacity .45s ease;
   }
+  body.hint-gone .zoomhint { opacity:0; }
   .zoomhint kbd {
     background:#fff; border:1px solid var(--line-2); border-bottom-width:2px; border-radius:3px;
     padding:1px 4px; font-size:9.5px; font-family:var(--mono); color:var(--tx-2);
@@ -522,6 +553,9 @@ function layout(title, { crumb = "", status = "", actions = "", rail = "", main 
     display:flex; justify-content:space-between; align-items:center; gap:8px;
     font-size:11px; color:var(--tx); line-height:2; font-variant-numeric:tabular-nums;
   }
+  #editSidebar .sb-row.scrubbable span:first-child { cursor:ew-resize; user-select:none; }
+  #editSidebar .sb-row.scrubbable:hover span:first-child { color:var(--sel); }
+  body.scrubbing, body.scrubbing * { cursor:ew-resize !important; user-select:none !important; }
   #editSidebar .sb-row span:first-child { color:var(--tx-3); }
   #editSidebar kbd, .sb-keys kbd {
     background:var(--hover); border:1px solid var(--line-2); border-bottom-width:2px;
@@ -874,6 +908,10 @@ app.post("/run", upload.fields([{ name: "pdf", maxCount: 1 }, { name: "extraConf
               totalCacheReadTokens: result.totalCacheReadTokens,
               totalCacheWriteTokens: result.totalCacheWriteTokens,
             },
+            // Détail par passe : indispensable pour savoir laquelle coûte
+            // cher plutôt que de l'estimer.
+            perPass: result.perPassUsage,
+            costUsd: (result.perPassUsage || []).reduce((sum, p) => sum + p.costUsd, 0),
           }, null, 2)
         );
       } catch { /* la trace est un confort, pas un prérequis */ }
@@ -963,25 +1001,67 @@ app.get("/runs/:id/download", (req, res) => {
   const finalPass = state.result.passes.at(-1);
   const { jsxCode, componentName, images } = collectDownloadAssets(finalPass.jsxPath);
 
+  // Conversion vers le format de l'app : fichier évalué comme corps de
+  // fonction (React/engine injectés) et images lues depuis la base via
+  // `assets`. La preview, elle, continue de fonctionner avec les imports.
+  let db = null;
+  try {
+    db = toDbFormat(jsxCode);
+  } catch (err) {
+    db = { error: err.message };
+  }
+
+  const assetLines = db.assets?.length
+    ? db.assets.map((a) => `  ${a.key.padEnd(16)} <- assets/${a.key}${path.extname(a.file) || ".png"}`).join("\n")
+    : "  (aucune image)";
+
   const readme = `Composant généré par la pipeline Design-to-Code -- run ${req.params.id}, page ${state.page}.
 
-Contenu :
-- ${componentName}.jsx -- le composant React
-- images/cv-templates/.../*.png -- les vraies images extraites du PDF source, référencées par le composant
+CONTENU
+- ${componentName}.jsx        le composant AU FORMAT DE L'APP : évalué comme corps de
+                              fonction recevant React et engine, images lues dans l'objet
+                              assets. C'est ce fichier qui va en base.
+- assets/                     les images du template, nommées par leur clé.
+- assets-manifest.json        clé -> fichier, pour l'insertion en base.
+- preview/${componentName}.jsx  la version à imports utilisée par la preview locale
+                              (même rendu, format différent) -- pour référence.
 
-Ce qui n'est PAS inclus / à vérifier avant intégration :
-- Le fichier CSS que le composant importe (ex: xxxSmartCv.css) n'existe pas ici -- il n'a jamais été généré, son import est vide dans ce test. Vérifie s'il faut en écrire un (l'exemple Visian en a un, avec quelques classes custom hors Tailwind).
-- Les imports du moteur (@/components/CvSmart/templates/engine/...) et du schéma cvData supposent que ce composant vit dans le même projet que templates copy/ -- adapte les chemins si tu le déplaces ailleurs.
-- Ce composant n'a été testé que dans le harness de test de la pipeline (React seul + données factices), pas dans l'app CV Smart réelle.
+CLÉS D'IMAGES ATTENDUES DANS assets
+${assetLines}
+
+À SAVOIR
+- Les images sont exposées en portée module (__assets), renseignée par le composant
+  principal avant tout rendu enfant : les sous-composants y accèdent sans recevoir la
+  prop. C'est correct ici parce qu'un asset appartient au TEMPLATE, pas au CV -- il ne
+  change pas d'un candidat à l'autre.
+- Le CSS éventuel (xxxSmartCv.css) n'est pas généré : à écrire si le template a besoin
+  de classes hors Tailwind, comme l'exemple Visian.
+- Ce composant n'a été validé que dans le harness local (React seul + données factices),
+  pas dans l'app réelle.
 `;
 
   res.attachment(`${componentName}.zip`);
   const archive = new ZipArchive({ zlib: { level: 9 } });
   archive.on("error", (err) => res.status(500).end(String(err)));
   archive.pipe(res);
-  archive.append(jsxCode, { name: `${componentName}.jsx` });
+
+  if (db.error) {
+    archive.append(`La conversion vers le format base a échoué : ${db.error}\n`, { name: "CONVERSION-ECHOUEE.txt" });
+  } else {
+    archive.append(db.code, { name: `${componentName}.jsx` });
+    archive.append(
+      JSON.stringify(Object.fromEntries(db.assets.map((a) => [a.key, `assets/${a.key}${path.extname(a.file) || ".png"}`])), null, 2),
+      { name: "assets-manifest.json" }
+    );
+    // Les images, renommées par leur clé pour coller au manifeste.
+    for (const a of db.assets) {
+      const src = images.find((i) => i.zipPath.endsWith(path.basename(a.file)));
+      if (src) archive.file(src.abs, { name: `assets/${a.key}${path.extname(a.file) || ".png"}` });
+    }
+  }
+
+  archive.append(jsxCode, { name: `preview/${componentName}.jsx` });
   archive.append(readme, { name: "README.txt" });
-  for (const img of images) archive.file(img.abs, { name: img.zipPath });
   archive.finalize();
 });
 
@@ -1163,10 +1243,6 @@ app.get("/runs/:id", (req, res) => {
     status: `<span class="badge done">Terminé</span>`,
     actions: `
       ${state.pdfUrl ? `<a class="btn ghost" href="${state.pdfUrl}#page=${state.page}" target="_blank" rel="noopener">${ICON.pdf}<span>PDF</span></a>` : ""}
-      <button type="button" id="editToggle" class="btn">
-        <span class="ic-on">${ICON.cursor}</span><span class="ic-off" hidden>${ICON.close}</span>
-        <span class="btn-label">Ajuster les images</span>
-      </button>
       <a class="btn primary" href="/runs/${runId}/download">${ICON.download}<span>Télécharger le .jsx</span></a>
       ${backIcon}`,
     rail: `<div class="rail-group">
@@ -1204,15 +1280,22 @@ app.get("/runs/:id", (req, res) => {
           <div class="board-shield"></div>
         </div>
       </div>
-      <div class="zoombar">
+      <div class="dock" role="toolbar" aria-label="Outils">
+        <button type="button" class="tool" data-tool="none" aria-pressed="true" title="Parcourir — H">${ICON.hand}</button>
+        <button type="button" class="tool" data-tool="all" aria-pressed="false" title="Sélection — V">${ICON.cursor}</button>
+        <button type="button" class="tool" data-tool="text" aria-pressed="false" title="Texte — T">${ICON.text}</button>
+        <button type="button" class="tool" data-tool="img" aria-pressed="false" title="Image — I">${ICON.image}</button>
+        <button type="button" class="tool" data-tool="div" aria-pressed="false" title="Bloc (conteneur) — B">${ICON.block}</button>
+        <span class="zsep"></span>
+        <button type="button" id="onionBtn" aria-pressed="false" title="Calque de la cible — O"${targetForOnion ? "" : " disabled"}>${ICON.onion}</button>
+        <span class="zsep"></span>
         <button type="button" id="zOut" title="Dézoomer" aria-label="Dézoomer">${ICON.minus}</button>
         <button type="button" id="zVal" class="zval" title="Revenir à 100 %">100 %</button>
         <button type="button" id="zIn" title="Zoomer" aria-label="Zoomer">${ICON.plus}</button>
-        <span class="zsep"></span>
-        <button type="button" id="zFit" title="Tout afficher (Maj+1)">${ICON.fit}<span>Ajuster</span></button>
+        <button type="button" id="zFit" title="Tout afficher — Maj+1" aria-label="Tout afficher">${ICON.fit}</button>
       </div>
       <p class="zoomhint">
-        <kbd>glisser</kbd> déplacer &nbsp; <kbd>molette</kbd> défiler<br>
+        <kbd>glisser</kbd> déplacer &nbsp; <kbd>molette</kbd> défiler &nbsp;
         <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>molette</kbd> zoomer &nbsp; <kbd>Espace</kbd>+glisser
       </p>
     </main>`,
@@ -1222,14 +1305,10 @@ app.get("/runs/:id", (req, res) => {
         <p class="sb-label">Sélection</p>
         <div class="sb-box" id="sbSel"><div class="sb-row"><span>Aucune</span></div></div>
       </div>
-      ${targetForOnion ? `<div>
+      ${targetForOnion ? `<div id="sbOnion" hidden>
         <p class="sb-label">Calque de la cible</p>
         <div class="sb-box">
-          <label class="sb-row" style="cursor:pointer">
-            <span style="color:var(--tx-2)">Superposer</span>
-            <input type="checkbox" id="onionOn">
-          </label>
-          <input type="range" id="onionOpacity" min="0" max="100" value="45" aria-label="Opacité du calque">
+          <input type="range" id="onionOpacity" min="0" max="100" value="45" aria-label="Opacité du calque" style="margin-top:0">
           <div class="sb-row"><span>Opacité</span><span id="onionVal">45 %</span></div>
         </div>
       </div>` : ""}
@@ -1240,10 +1319,10 @@ app.get("/runs/:id", (req, res) => {
             <button type="button" class="sb-btn mode-btn active" data-mode="padding">Intérieur (P)</button>
             <button type="button" class="sb-btn mode-btn" data-mode="margin">Extérieur (M)</button>
           </div>
-          <div class="sb-row"><span>Haut</span><input type="number" step="0.1" class="pad-in" data-side="n" aria-label="Haut"></div>
-          <div class="sb-row"><span>Droite</span><input type="number" step="0.1" class="pad-in" data-side="e" aria-label="Droite"></div>
-          <div class="sb-row"><span>Bas</span><input type="number" step="0.1" class="pad-in" data-side="s" aria-label="Bas"></div>
-          <div class="sb-row"><span>Gauche</span><input type="number" step="0.1" class="pad-in" data-side="w" aria-label="Gauche"></div>
+          <div class="sb-row scrubbable" title="Glisser la souris ou utiliser la molette"><span>Haut</span><input type="number" step="0.1" class="pad-in" data-side="n" aria-label="Haut"></div>
+          <div class="sb-row scrubbable" title="Glisser la souris ou utiliser la molette"><span>Droite</span><input type="number" step="0.1" class="pad-in" data-side="e" aria-label="Droite"></div>
+          <div class="sb-row scrubbable" title="Glisser la souris ou utiliser la molette"><span>Bas</span><input type="number" step="0.1" class="pad-in" data-side="s" aria-label="Bas"></div>
+          <div class="sb-row scrubbable" title="Glisser la souris ou utiliser la molette"><span>Gauche</span><input type="number" step="0.1" class="pad-in" data-side="w" aria-label="Gauche"></div>
         </div>
       </div>
       <div>
@@ -1273,28 +1352,61 @@ app.get("/runs/:id", (req, res) => {
       const vp = document.getElementById('viewport');
       const world = document.getElementById('world');
       const WORLD_W = ${W * 2 + BOARD_GAP}, WORLD_H = ${H};
-      const MIN_Z = 0.02, MAX_Z = 8;
+      // La barre du bas flotte au-dessus du plan de travail : le cadrage lui
+      // réserve sa hauteur, sinon elle masque le pied des pages.
+      const MAX_Z = 8, FIT_PAD = 56, DOCK_SAFE = 52;
+      // Le plan de travail est borné : au-delà des pages, on ne peut découvrir
+      // qu'une marge de vide, jamais les perdre de vue. Sans ça un glisser un
+      // peu vif laisse un écran gris, et il faut retrouver son chemin à
+      // l'aveugle. La marge est proportionnelle à la fenêtre pour rester
+      // franchissable au zoom fort comme au zoom faible.
+      const OVERSCROLL = 0.3;
       let z = 1, tx = 0, ty = 0, spaceDown = false;
 
       const zVal = document.getElementById('zVal');
       const frameNames = () => document.querySelectorAll('.frame-name');
 
+      /** Échelle à laquelle les deux pages tiennent entièrement à l'écran. */
+      function fitZoom(pad) {
+        pad = pad == null ? FIT_PAD : pad;
+        const r = vp.getBoundingClientRect();
+        if (!r.width || !r.height) return 1;
+        return Math.max(0.02, Math.min((r.width - pad * 2) / WORLD_W, (r.height - DOCK_SAFE - pad * 2) / WORLD_H));
+      }
+      // Dézoomer au-delà de la moitié du cadrage complet ne montre plus rien
+      // d'utile : c'est la borne basse.
+      function clampZ(v) { return Math.max(fitZoom() * 0.5, Math.min(MAX_Z, v)); }
+
+      /** Ramène le déplacement dans les bornes du plan de travail. */
+      function clampPan() {
+        const r = vp.getBoundingClientRect();
+        if (!r.width || !r.height) return;
+        const m = Math.min(r.width, r.height) * OVERSCROLL;
+        // Les deux bornes se croisent selon que les pages sont plus larges ou
+        // plus étroites que la fenêtre ; min/max remet l'intervalle à
+        // l'endroit dans les deux cas. Le cadrage complet, lui, tombe toujours
+        // dedans -- il n'est jamais recalé.
+        const bx = [m, r.width - WORLD_W * z - m];
+        const by = [m, r.height - WORLD_H * z - m];
+        tx = Math.min(Math.max(tx, Math.min(bx[0], bx[1])), Math.max(bx[0], bx[1]));
+        ty = Math.min(Math.max(ty, Math.min(by[0], by[1])), Math.max(by[0], by[1]));
+      }
+
       function apply() {
+        clampPan();
         world.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + z + ')';
         // Les noms de cadre gardent leur taille à l'écran, comme dans un
         // éditeur : illisibles à 20 %, énormes à 400 % sinon.
         for (const n of frameNames()) n.style.transform = 'scale(' + (1 / z) + ')';
         zVal.textContent = Math.round(z * 100) + ' %';
       }
-      function clampZ(v) { return Math.max(MIN_Z, Math.min(MAX_Z, v)); }
 
       function fit(pad) {
-        pad = pad == null ? 56 : pad;
         const r = vp.getBoundingClientRect();
         if (!r.width || !r.height) return;
-        z = clampZ(Math.min((r.width - pad * 2) / WORLD_W, (r.height - pad * 2) / WORLD_H));
+        z = fitZoom(pad);
         tx = (r.width - WORLD_W * z) / 2;
-        ty = (r.height - WORLD_H * z) / 2;
+        ty = (r.height - DOCK_SAFE - WORLD_H * z) / 2;
         apply();
       }
       /** Zoome en gardant fixe le point sous le curseur. */
@@ -1316,7 +1428,7 @@ app.get("/runs/:id", (req, res) => {
       function onWheel(e, clientX, clientY) {
         e.preventDefault();
         if (e.ctrlKey || e.metaKey) {
-          zoomAt(clientX, clientY, Math.exp(-e.deltaY * 0.0125));
+          zoomAt(clientX, clientY, Math.exp(-e.deltaY * 0.0025));
         } else {
           tx -= e.deltaX; ty -= e.deltaY;
           apply();
@@ -1328,6 +1440,7 @@ app.get("/runs/:id", (req, res) => {
       let panning = false, sx = 0, sy = 0, stx = 0, sty = 0, panId = null;
       vp.addEventListener('pointerdown', (e) => {
         if (e.button === 2) return;
+        if (e.target.closest('.dock')) return;
         const board = e.target.closest('.board');
         const onShield = e.target.classList.contains('board-shield');
         // Hors mode édition les écrans de captage couvrent les cadres : on
@@ -1356,6 +1469,14 @@ app.get("/runs/:id", (req, res) => {
       vp.addEventListener('pointercancel', endPan);
       vp.addEventListener('contextmenu', (e) => { if (spaceDown) e.preventDefault(); });
 
+      // Cliquer à l'extérieur de la zone du CV / des contrôles désélectionne l'élément courant
+      document.addEventListener('pointerdown', (e) => {
+        if (e.target && e.target.closest && (e.target.closest('#scaleFrame') || e.target.closest('#editSidebar') || e.target.closest('.dock'))) {
+          return;
+        }
+        post({ type: 'cv-deselect' });
+      });
+
       // --- Clavier ---
       function setSpace(down) {
         if (spaceDown === down) return;
@@ -1368,8 +1489,13 @@ app.get("/runs/:id", (req, res) => {
         if (e.code === 'Space') { setSpace(true); e.preventDefault(); return; }
         if (e.shiftKey && e.key === '!') { fit(); e.preventDefault(); return; }   // Maj+1
         if (e.shiftKey && (e.key === '0' || e.key === 'à')) { z = 1; centerOnWorld(); e.preventDefault(); return; }
-        if (e.key === '+' || e.key === '=') { zoomCenter(1.2); e.preventDefault(); }
-        if (e.key === '-') { zoomCenter(1 / 1.2); e.preventDefault(); }
+        if (e.key === '+' || e.key === '=') { zoomCenter(1.2); e.preventDefault(); return; }
+        if (e.key === '-') { zoomCenter(1 / 1.2); e.preventDefault(); return; }
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        const k = e.key.toLowerCase();
+        const byKey = { h: 'none', v: 'all', t: 'text', i: 'img', b: 'div' };
+        if (byKey[k]) { setTool(byKey[k]); e.preventDefault(); return; }
+        if (k === 'o') { setOnion(!onionOn); e.preventDefault(); }
       }
       function onKeyUp(e) { if (e.code === 'Space') setSpace(false); }
       document.addEventListener('keydown', onKeyDown);
@@ -1388,11 +1514,32 @@ app.get("/runs/:id", (req, res) => {
       document.getElementById('zFit').addEventListener('click', () => fit());
       zVal.addEventListener('click', () => { z = 1; centerOnWorld(); });
 
-      // Le panneau d'inspection reprend de la largeur au plan de travail : sans
-      // nouveau cadrage, les pages sortent de l'écran par la droite.
-      let fitted = false;
-      new ResizeObserver(() => { if (!fitted) { fit(); fitted = true; } }).observe(vp);
-      fit();
+      // Ouvrir le panneau d'inspection reprend de la largeur au plan de travail.
+      // Recadrer d'office ferait sauter la vue : on décale de la moitié de ce
+      // qui a été pris ou rendu, ce qui garde le point central sous les yeux.
+      // La référence est conservée : un ResizeObserver dont la seule attache est
+      // interne finit ramassé par le GC, et l'observation s'arrête en silence
+      // après le tout premier appel.
+      let lastW = 0, lastH = 0;
+      const vpResize = new ResizeObserver(() => {
+        const r = vp.getBoundingClientRect();
+        if (!r.width || !r.height) return;
+        if (!lastW) { fit(); }
+        else { tx += (r.width - lastW) / 2; ty += (r.height - lastH) / 2; apply(); }
+        lastW = r.width; lastH = r.height;
+      });
+      vpResize.observe(vp);
+
+      // L'aide au pilotage a fait son office dès le premier geste.
+      let hintGone = false;
+      function dismissHint() {
+        if (hintGone) return;
+        hintGone = true;
+        document.body.classList.add('hint-gone');
+      }
+      vp.addEventListener('wheel', dismissHint, { passive: true });
+      vp.addEventListener('pointerdown', dismissHint);
+      setTimeout(dismissHint, 9000);
 
       // La molette et Espace doivent aussi marcher quand le curseur est
       // au-dessus de la preview en mode édition -- l'iframe est de même
@@ -1413,105 +1560,157 @@ app.get("/runs/:id", (req, res) => {
       document.getElementById('scaleFrame').addEventListener('load', bindFrameEvents);
       bindFrameEvents();
 
-      // ============================ Éditeur d'images ============================
-      // L'iframe est servie par ce même serveur, donc même origine : on peut
-      // injecter le script d'édition dans son document et récupérer les
-      // ajustements par postMessage.
+      // ============================== Outils ==============================
+      // La barre du bas porte le mode de travail. Changer d'outil ne détruit
+      // jamais rien : seul « Annuler et quitter » recharge la preview. Le
+      // script d'édition est injecté à la première demande et reste en place
+      // ensuite -- l'outil « Parcourir » le laisse simplement inerte.
       let currentEdits = null;
-      const toggle = document.getElementById('editToggle');
-      const toggleLabel = toggle.querySelector('.btn-label');
-      const toggleIconOn = toggle.querySelector('.ic-on');
-      const toggleIconOff = toggle.querySelector('.ic-off');
+      let tool = 'none';
+      let onionOn = false;
+      let overlayReady = false, overlayBusy = false, readyResolve = null;
+
       const saveBtn = document.getElementById('editSave');
       const sidebar = document.getElementById('editSidebar');
       const sbSel = document.getElementById('sbSel');
+      const sbOnion = document.getElementById('sbOnion');
       const cancelBtn = document.getElementById('editCancel');
-      // Le statut du panneau latéral remplace l'ancien texte surimprimé sur
-      // la preview.
+      const onionBtn = document.getElementById('onionBtn');
       const hint = document.getElementById('sbStatus');
-      let editing = false;
+      const frameEl = () => document.getElementById('scaleFrame');
+      const isEditTool = (t) => t === 'all' || t === 'text' || t === 'img' || t === 'div';
+      const post = (msg) => { const f = frameEl(); if (f && f.contentWindow) f.contentWindow.postMessage(msg, '*'); };
 
-      // Tout le corps est enveloppé : une exception dans un gestionnaire
-      // async disparaît silencieusement, et l'utilisateur voit juste un
-      // bouton qui "ne fait rien". On affiche donc l'erreur.
-      toggle.addEventListener('click', async () => {
-       try {
-        const frame = document.getElementById('scaleFrame');
-        if (editing) {
-          editing = false;
-          toggleLabel.textContent = 'Ajuster les images';
-          toggleIconOn.hidden = false; toggleIconOff.hidden = true;
-          toggle.classList.remove('active');
-          frame.contentWindow.postMessage({ type: 'cv-deselect' }, '*');
-          frame.src = frame.src; // recharge : annule les ajustements non enregistrés
-          hint.textContent = 'Aucune modification';
-          currentEdits = null;
-          document.getElementById('previewPane').classList.remove('editing');
-          sidebar.classList.remove('open');
-          document.body.classList.remove('editing-open');
-          sbSel.innerHTML = '<div class="sb-row"><span>Aucune</span></div>';
-          saveBtn.disabled = true;
-          return;
-        }
-        editing = true;
-        toggleLabel.textContent = "Quitter l'édition";
-        toggleIconOn.hidden = true; toggleIconOff.hidden = false;
-        toggle.classList.add('active');
-        document.getElementById('previewPane').classList.add('editing');
-        sidebar.classList.add('open');
-        document.body.classList.add('editing-open');
-        // On amène la preview au centre : c'est sur elle qu'on va travailler.
-        focusPreview();
+      // Recharger l'iframe emporte le script injecté avec elle.
+      frameEl().addEventListener('load', () => { overlayReady = false; });
 
-        // Les runs générés avant l'ajout des repères data-cvimg n'ont pas
-        // d'images identifiables : on re-rend une fois (local, gratuit).
-        // Un rendu produit avant l'ajout d'un type de repère laisserait
-        // l'édition correspondante indisponible sans le dire : on compare
-        // donc la version du schéma d'étiquetage plutôt que la présence
-        // d'un attribut particulier.
-        const tagsMeta = frame.contentDocument.querySelector('meta[name="cv-tags"]');
-        if (!tagsMeta || tagsMeta.content !== '3') {
-          hint.textContent = "Préparation de l'éditeur...";
-          const rr = await fetch('/runs/${runId}/rerender', { method: 'POST' });
-          if (!rr.ok) { hint.textContent = 'Préparation échouée : ' + (await rr.text()); return; }
-          await new Promise((resolve) => {
-            frame.addEventListener('load', resolve, { once: true });
-            frame.src = frame.src.split('?')[0] + '?t=' + Date.now();
-          });
-          bindFrameEvents();
-        }
-        // Injecté comme code inline (et non via src) : pas de cache
-        // navigateur possible, exécution immédiate, et une erreur de
-        // chargement devient visible au lieu d'échouer en silence.
-        const code = await (await fetch('/editor-overlay.js?t=' + Date.now())).text();
-        const s = frame.contentDocument.createElement('script');
-        s.textContent = code;
-        frame.contentDocument.body.appendChild(s);
+      function waitReady(ms) {
+        return new Promise((resolve) => {
+          readyResolve = resolve;
+          setTimeout(() => { if (readyResolve === resolve) { readyResolve = null; resolve(false); } }, ms);
+        });
+      }
 
-        setTimeout(() => {
-          if (editing && !hint.textContent.includes('image(s)')) {
-            hint.textContent = "L'éditeur ne s'est pas initialisé — regarde la console du navigateur.";
+      /** Injecte le script d'édition si besoin. needTags n'est vrai que pour
+       *  les outils qui sélectionnent : le calque, lui, n'a pas besoin des
+       *  repères posés dans le rendu. */
+      async function ensureOverlay(needTags) {
+        if (overlayReady) return true;
+        if (overlayBusy) return false;
+        overlayBusy = true;
+        try {
+          const frame = frameEl();
+          // Les runs générés avant l'ajout des repères data-cvimg n'ont pas
+          // d'éléments identifiables : on re-rend une fois (local, gratuit).
+          // Un rendu produit avant l'ajout d'un type de repère laisserait
+          // l'édition correspondante indisponible sans le dire : on compare
+          // donc la version du schéma d'étiquetage plutôt que la présence
+          // d'un attribut particulier.
+          if (needTags) {
+            const meta = frame.contentDocument.querySelector('meta[name="cv-tags"]');
+            if (!meta || meta.content !== '4') {
+              hint.textContent = "Préparation de l'éditeur...";
+              const rr = await fetch('/runs/${runId}/rerender', { method: 'POST' });
+              if (!rr.ok) { hint.textContent = 'Préparation échouée : ' + (await rr.text()); return false; }
+              await new Promise((resolve) => {
+                frame.addEventListener('load', resolve, { once: true });
+                frame.src = frame.src.split('?')[0] + '?t=' + Date.now();
+              });
+              bindFrameEvents();
+            }
           }
-        }, 2000);
-       } catch (err) {
-         hint.textContent = 'Erreur : ' + err.message;
-         console.error(err);
-       }
-      });
+          // Injecté comme code inline (et non via src) : pas de cache
+          // navigateur possible, exécution immédiate, et une erreur de
+          // chargement devient visible au lieu d'échouer en silence.
+          const code = await (await fetch('/editor-overlay.js?t=' + Date.now())).text();
+          const el = frame.contentDocument.createElement('script');
+          el.textContent = code;
+          const ready = waitReady(4000);
+          frame.contentDocument.body.appendChild(el);
+          if (!await ready) {
+            hint.textContent = "L'éditeur ne s'est pas initialisé — regarde la console du navigateur.";
+            return false;
+          }
+          return true;
+        } catch (err) {
+          // Une exception dans un gestionnaire async disparaît silencieusement,
+          // et l'utilisateur voit juste un bouton qui « ne fait rien ».
+          hint.textContent = 'Erreur : ' + err.message;
+          console.error(err);
+          return false;
+        } finally {
+          overlayBusy = false;
+        }
+      }
+
+      async function setTool(next) {
+        if (next === tool) return;
+        if (isEditTool(next)) {
+          if (!await ensureOverlay(true)) { syncDock(); return; }
+          // Première entrée en édition : on amène la preview au centre, c'est
+          // sur elle qu'on va travailler.
+          if (!isEditTool(tool)) focusPreview();
+        }
+        tool = next;
+        post({ type: 'cv-settool', tool });
+        syncDock();
+      }
+
+      async function setOnion(on) {
+        if (on && !await ensureOverlay(false)) { syncDock(); return; }
+        onionOn = on;
+        pushOnion();
+        syncDock();
+      }
+
+      function syncDock() {
+        for (const b of document.querySelectorAll('.dock .tool')) {
+          b.setAttribute('aria-pressed', String(b.dataset.tool === tool));
+        }
+        if (onionBtn) onionBtn.setAttribute('aria-pressed', String(onionOn));
+        const editing = isEditTool(tool);
+        document.body.classList.toggle('tool-edit', editing);
+        document.getElementById('previewPane').classList.toggle('editing', editing);
+        if (sbOnion) sbOnion.hidden = !onionOn;
+        // Le panneau reste ouvert tant qu'il a quelque chose à montrer : un
+        // outil actif, un réglage de calque, ou des modifications à enregistrer.
+        const pending = currentEdits
+          ? Object.keys(currentEdits.images).length + Object.keys(currentEdits.texts).length + Object.keys(currentEdits.classes).length
+          : 0;
+        const open = editing || onionOn || pending > 0;
+        sidebar.classList.toggle('open', open);
+        document.body.classList.toggle('editing-open', open);
+        if (!editing) {
+          post({ type: 'cv-deselect' });
+          sbSel.innerHTML = '<div class="sb-row"><span>Aucune</span></div>';
+          document.getElementById('sbSpacing').hidden = true;
+        }
+      }
+
+      for (const b of document.querySelectorAll('.dock .tool')) {
+        b.addEventListener('click', () => setTool(b.dataset.tool));
+      }
+      if (onionBtn) onionBtn.addEventListener('click', () => setOnion(!onionOn));
 
       /** Cadre la preview seule, à une échelle où les poignées sont saisissables. */
       function focusPreview() {
         const r = vp.getBoundingClientRect();
-        z = clampZ(Math.min((r.width - 64) / ${W}, (r.height - 64) / ${H}));
+        z = clampZ(Math.min((r.width - 64) / ${W}, (r.height - DOCK_SAFE - 64) / ${H}));
         tx = (r.width - ${W} * z) / 2 - (${W + BOARD_GAP}) * z;
-        ty = (r.height - ${H} * z) / 2;
+        ty = (r.height - DOCK_SAFE - ${H} * z) / 2;
         apply();
       }
 
       window.addEventListener('message', async (e) => {
         if (!e.data) return;
         if (e.data.type === 'cv-editor-ready') {
-          hint.textContent = e.data.count + ' image(s) éditable(s)';
+          overlayReady = true;
+          if (readyResolve) { const r = readyResolve; readyResolve = null; r(true); }
+          const parts = [];
+          if (e.data.count) parts.push(e.data.count + ' image' + (e.data.count > 1 ? 's' : ''));
+          if (e.data.texts) parts.push(e.data.texts + ' texte' + (e.data.texts > 1 ? 's' : ''));
+          hint.textContent = parts.length ? parts.join(' · ') + ' éditables' : "Rien d'éditable dans ce rendu";
+          post({ type: 'cv-settool', tool });
           pushOnion();
         }
         if (e.data.type === 'cv-select') {
@@ -1531,12 +1730,13 @@ app.get("/runs/:id", (req, res) => {
             }
           } else {
             sbSel.innerHTML = '<div class="sb-row"><span>Image</span><span>#' + sel.id + '</span></div>'
-              + '<div class="sb-row"><span>Largeur</span><span>' + sel.width + ' em</span></div>'
-              + '<div class="sb-row"><span>Hauteur</span><span>' + sel.height + ' em</span></div>'
-              + '<div class="sb-row"><span>X</span><span>' + sel.left + ' em</span></div>'
-              + '<div class="sb-row"><span>Y</span><span>' + sel.top + ' em</span></div>';
+              + '<div class="sb-row scrubbable" title="Glisser la souris ou utiliser la molette"><span>Largeur</span><input type="number" step="0.1" min="0" class="pad-in img-in" data-prop="width" value="' + sel.width + '"></div>'
+              + '<div class="sb-row scrubbable" title="Glisser la souris ou utiliser la molette"><span>Hauteur</span><input type="number" step="0.1" min="0" class="pad-in img-in" data-prop="height" value="' + sel.height + '"></div>'
+              + '<div class="sb-row scrubbable" title="Glisser la souris ou utiliser la molette"><span>X</span><input type="number" step="0.1" class="pad-in img-in" data-prop="left" value="' + sel.left + '"></div>'
+              + '<div class="sb-row scrubbable" title="Glisser la souris ou utiliser la molette"><span>Y</span><input type="number" step="0.1" class="pad-in img-in" data-prop="top" value="' + sel.top + '"></div>';
             spacingBox.hidden = true;
           }
+          bindScrubbers();
         }
         if (e.data.type === 'cv-edits') {
           currentEdits = { images: e.data.edits, texts: e.data.textEdits || {}, classes: e.data.classEdits || {} };
@@ -1546,6 +1746,7 @@ app.get("/runs/:id", (req, res) => {
           // le bouton doit alors se désactiver, pas rester actif à vide.
           saveBtn.disabled = n === 0;
           hint.textContent = n ? n + ' modification(s) en attente' : 'Aucune modification';
+          syncDock();
         }
       });
 
@@ -1553,7 +1754,7 @@ app.get("/runs/:id", (req, res) => {
       // (juste après un clic sur un bouton, par exemple) sont relayés à
       // l'iframe, qui détient l'historique.
       document.addEventListener('keydown', (e) => {
-        if (!editing) return;
+        if (!isEditTool(tool)) return;
         const mod = e.ctrlKey || e.metaKey;
         if (!mod) return;
         const frame = document.getElementById('scaleFrame');
@@ -1580,17 +1781,99 @@ app.get("/runs/:id", (req, res) => {
         else { saveBtn.disabled = false; saveBtn.textContent = 'Enregistrer'; hint.textContent = 'Échec : ' + (await r.text()); }
       });
 
-      cancelBtn.addEventListener('click', () => toggle.click());
+      cancelBtn.addEventListener('click', () => {
+        const frame = frameEl();
+        frame.src = frame.src; // recharge : annule les ajustements non enregistrés
+        currentEdits = null;
+        tool = 'none';
+        onionOn = false;
+        saveBtn.disabled = true;
+        hint.textContent = 'Aucune modification';
+        syncDock();
+      });
 
       const frameWin = () => document.getElementById('scaleFrame').contentWindow;
-      for (const inp of document.querySelectorAll('.pad-in')) {
-        inp.addEventListener('change', () => {
-          // Les champs sont en em ; l'éditeur travaille en pixels, on
-          // convertit via la police de l'élément (16 px par défaut suffirait
-          // rarement) -- c'est l'éditeur qui reconvertit proprement.
-          frameWin().postMessage({ type: 'cv-setspacing-em', side: inp.dataset.side, em: Number(inp.value) }, '*');
+      function bindScrubbers() {
+        document.querySelectorAll('#editSidebar .sb-row.scrubbable').forEach((row) => {
+          if (row.__scrubBound) return;
+          row.__scrubBound = true;
+          const input = row.querySelector('input');
+          if (!input) return;
+          const label = row.querySelector('span:first-child');
+
+          const triggerChange = () => {
+            if (input.classList.contains('img-in')) {
+              frameWin().postMessage({ type: 'cv-setgeom-em', [input.dataset.prop]: Number(input.value) }, '*');
+            } else {
+              frameWin().postMessage({ type: 'cv-setspacing-em', side: input.dataset.side, em: Number(input.value) }, '*');
+            }
+          };
+
+          // La saisie manuelle au clavier fonctionne à 100% sans bloquer le focus
+          input.addEventListener('input', triggerChange);
+          input.addEventListener('change', triggerChange);
+
+          // Le glisser-déposer (scrubbing) s'effectue uniquement sur le libellé (span)
+          if (label) {
+            let isDragging = false;
+            let startX = 0;
+            let startVal = 0;
+
+            label.addEventListener('pointerdown', (e) => {
+              isDragging = true;
+              startX = e.clientX;
+              startVal = Number(input.value) || 0;
+              label.setPointerCapture(e.pointerId);
+              document.body.classList.add('scrubbing');
+              e.preventDefault();
+            });
+
+            label.addEventListener('pointermove', (e) => {
+              if (!isDragging) return;
+              const dx = e.clientX - startX;
+              const step = e.shiftKey ? 1.0 : (e.altKey ? 0.01 : 0.1);
+              let newVal = Math.round((startVal + dx * step * 0.5) * 100) / 100;
+              if (input.min !== "" && newVal < Number(input.min)) newVal = Number(input.min);
+              input.value = newVal;
+              triggerChange();
+            });
+
+            const endDrag = (e) => {
+              if (!isDragging) return;
+              isDragging = false;
+              document.body.classList.remove('scrubbing');
+              try { label.releasePointerCapture(e.pointerId); } catch {}
+            };
+
+            label.addEventListener('pointerup', endDrag);
+            label.addEventListener('pointercancel', endDrag);
+
+            label.addEventListener('wheel', (e) => {
+              e.preventDefault();
+              const step = e.shiftKey ? 1.0 : (e.altKey ? 0.01 : 0.1);
+              const delta = e.deltaY < 0 ? step : -step;
+              let newVal = Math.round(((Number(input.value) || 0) + delta) * 100) / 100;
+              if (input.min !== "" && newVal < Number(input.min)) newVal = Number(input.min);
+              input.value = newVal;
+              triggerChange();
+            }, { passive: false });
+          }
+
+          // Molette sur l'input directement
+          input.addEventListener('wheel', (e) => {
+            if (document.activeElement === input) return;
+            e.preventDefault();
+            const step = e.shiftKey ? 1.0 : (e.altKey ? 0.01 : 0.1);
+            const delta = e.deltaY < 0 ? step : -step;
+            let newVal = Math.round(((Number(input.value) || 0) + delta) * 100) / 100;
+            if (input.min !== "" && newVal < Number(input.min)) newVal = Number(input.min);
+            input.value = newVal;
+            triggerChange();
+          }, { passive: false });
         });
       }
+      bindScrubbers();
+
       for (const btn of document.querySelectorAll('.mode-btn')) {
         btn.addEventListener('click', () => {
           frameWin().postMessage({ type: 'cv-setmode', mode: btn.dataset.mode }, '*');
@@ -1599,25 +1882,21 @@ app.get("/runs/:id", (req, res) => {
 
       // Calque de décalque : la capture cible superposée en transparence
       // par-dessus la preview, pour aligner les éléments à l'oeil.
-      const onionOn = document.getElementById('onionOn');
       const onionOpacity = document.getElementById('onionOpacity');
       const onionVal = document.getElementById('onionVal');
       function pushOnion() {
-        if (!onionOn) return;
-        const frame = document.getElementById('scaleFrame');
-        if (!frame || !frame.contentWindow) return;
-        frame.contentWindow.postMessage({
+        if (!onionOpacity) return;
+        post({
           type: 'cv-onion',
           src: ${JSON.stringify(targetForOnion)},
-          on: onionOn.checked,
+          on: onionOn,
           opacity: Number(onionOpacity.value) / 100,
-        }, '*');
+        });
         if (onionVal) onionVal.textContent = onionOpacity.value + ' %';
       }
-      if (onionOn) {
-        onionOn.addEventListener('change', pushOnion);
-        onionOpacity.addEventListener('input', pushOnion);
-      }
+      if (onionOpacity) onionOpacity.addEventListener('input', pushOnion);
+
+      syncDock();
     </script>`,
   }));
 });
