@@ -106,8 +106,9 @@ def trim_stray_border(img):
     return (left, top, right, bottom)
 
 
-def main():
-    src, x, y, w, h, out = sys.argv[1:7]
+def main(src=None, x=None, y=None, w=None, h=None, out=None):
+    if src is None:
+        src, x, y, w, h, out = sys.argv[1:7]
     x, y, w, h = int(float(x)), int(float(y)), int(float(w)), int(float(h))
     img = Image.open(src).convert("RGBA")
     x0, y0 = max(0, x), max(0, y)
@@ -124,5 +125,36 @@ def main():
     cropped.save(out)
 
 
+def is_blank(path, threshold=3.0, white_level=250.0):
+    """Découpe où RIEN n'a été dessiné : uniforme ET blanche.
+
+    Le calque décor ne contient aucun texte -- or certaines icônes du PDF
+    sont en réalité des glyphes (un ☎ dans une police de symboles). Les
+    découper dans le calque donne une image blanche, et l'élément disparaît
+    du rendu sans que rien ne le signale.
+
+    L'uniformité seule ne suffit PAS à conclure : un panneau ou un bandeau
+    de couleur unie est uniforme par construction, et c'est pourtant du
+    contenu légitime. Ne juger que sur la variance faisait passer un aplat
+    gris pour une découpe ratée, déclenchait le repli sur la capture cible,
+    et ramenait avec lui tout le texte imprimé dessus.
+    """
+    from PIL import Image as _Image
+    import statistics
+    px = list(_Image.open(path).convert("RGB").getdata())
+    if not px:
+        return True
+    lum = [sum(p) / 3 for p in px]
+    return statistics.pstdev(lum) < threshold and (sum(lum) / len(lum)) > white_level
+
+
 if __name__ == "__main__":
-    main()
+    src, x, y, w, h, out = sys.argv[1:7]
+    fallback_src = sys.argv[7] if len(sys.argv) > 7 else None
+    main(src, x, y, w, h, out)
+    # Rien de visible dans le calque : on retente sur la capture cible, qui
+    # contient tout, texte compris.
+    if fallback_src and is_blank(out):
+        main(fallback_src, x, y, w, h, out)
+        print(f"BLANK_FALLBACK:{out}", file=sys.stderr)
+    print(out)
