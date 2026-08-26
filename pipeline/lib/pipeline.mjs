@@ -163,7 +163,7 @@ function saveAssetsMap(rawResponseText, outDir) {
 
 export async function runPipeline({
   pdfPath,
-  pageNumber = 1,
+  pageNumber = "all",
   // Effort de raisonnement de la passe 1 (low/high/max). C'est la passe qui
   // conçoit le composant : sur un template complexe, monter à `max` peut
   // valoir son surcoût, alors que sur un template simple c'est de l'argent

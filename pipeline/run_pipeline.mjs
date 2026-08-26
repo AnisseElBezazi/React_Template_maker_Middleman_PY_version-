@@ -1,5 +1,6 @@
 // CLI pour la pipeline Design-to-Code (voir lib/pipeline.mjs pour la logique).
-// Usage: node run_pipeline.mjs <pdf_path> [page_number] [cvdata_json]
+// Usage: node run_pipeline.mjs <pdf_path> [page_number|all] [cvdata_json]
+// Par défaut : "all" -- tout le template.
 
 import "dotenv/config";
 import path from "path";
@@ -10,13 +11,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const [, , pdfArg, pageArg, cvDataArg] = process.argv;
 if (!pdfArg) {
-  console.error("Usage: node run_pipeline.mjs <pdf_path> [page_number] [cvdata_json]");
+  console.error("Usage: node run_pipeline.mjs <pdf_path> [page_number|all] [cvdata_json]");
   process.exit(1);
 }
 
 const pdfPath = path.resolve(pdfArg);
 // "all" = reproduire le template entier (toutes les pages du PDF).
-const pageNumber = String(pageArg || "1").toLowerCase() === "all" ? "all" : (parseInt(pageArg || "1", 10) || 1);
+const pageNumber = String(pageArg || "all").toLowerCase() === "all" ? "all" : (parseInt(pageArg, 10) || 1);
 const cvDataPath = cvDataArg ? path.resolve(cvDataArg) : undefined;
 const runId = new Date().toISOString().replace(/[:.]/g, "-");
 const outDir = path.join(__dirname, "out", runId);

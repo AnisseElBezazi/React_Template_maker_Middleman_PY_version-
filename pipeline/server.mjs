@@ -723,7 +723,7 @@ app.get("/", (_req, res) => {
         <div class="sheet-head">
           <div>
             <h2>Nouveau run</h2>
-            <p>Une page de PDF entre, un composant React en sort. 5 passes : extraction, 3 tentatives, correctifs de taille.</p>
+            <p>Un PDF entre, un composant React en sort. 5 passes : extraction, 3 tentatives, correctifs de taille.</p>
           </div>
         </div>
 
@@ -741,8 +741,8 @@ app.get("/", (_req, res) => {
           </div>
 
           <div class="field-row">
-            <label for="pageInput">Page à traiter<span class="hint">Un numéro de page, ou « all » pour tout le template.</span></label>
-            <input type="text" class="num" name="page" id="pageInput" value="1" pattern="[0-9]+|all|ALL" title="Un numéro de page, ou all">
+            <label for="pageInput">Page à traiter<span class="hint">« all » pour tout le template, ou un numéro pour n'en faire qu'une.</span></label>
+            <input type="text" class="num" name="page" id="pageInput" value="all" pattern="[0-9]+|all|ALL" title="Un numéro de page, ou all">
           </div>
 
           <div class="field-row">
@@ -884,7 +884,7 @@ app.post("/run", upload.fields([{ name: "pdf", maxCount: 1 }, { name: "extraConf
   if (!pdfFile) return res.status(400).send("PDF manquant.");
   const extraConfigFile = req.files?.extraConfig?.[0];
   // "all" = reproduire le template entier (toutes les pages du PDF).
-  const rawPage = String(req.body.page || "1").trim().toLowerCase();
+  const rawPage = String(req.body.page || "all").trim().toLowerCase();
   const pageNumber = rawPage === "all" ? "all" : (parseInt(rawPage, 10) || 1);
   // Effort de raisonnement de la passe 1, choisi dans le formulaire.
   const rawEffort = String(req.body.effort || "high").trim().toLowerCase();
