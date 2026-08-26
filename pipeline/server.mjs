@@ -107,6 +107,7 @@ function rehydrateRun(runId) {
     pdfUrl: meta.pdfUrl && fs.existsSync(path.join(UPLOADS_ROOT, path.basename(meta.pdfUrl))) ? meta.pdfUrl : null,
     targetUrl,
     page: meta.page || 1,
+    effort: meta.effort || (meta.perPass || []).find((p) => p.step === "pass1")?.effort || null,
     result: { outDir, width, height, passes, ...meta.tokens },
   };
 }
@@ -360,12 +361,13 @@ function layout(title, { crumb = "", status = "", actions = "", rail = "", main 
   }
   .field-row label { font-weight:500; color:var(--tx); }
   .field-row .hint { display:block; font-weight:400; color:var(--tx-3); margin-top:1px; }
-  input[type=number].num {
+  input.num, select.num {
     width:60px; height:28px; padding:0 8px; border:1px solid var(--line-2); border-radius:var(--r);
     background:#fff; color:var(--tx); font-family:var(--mono); font-size:11.5px;
     text-align:right; font-variant-numeric:tabular-nums;
   }
-  input[type=number].num:focus { outline:none; border-color:var(--sel); box-shadow:0 0 0 2px var(--sel-soft); }
+  select.num { width:auto; padding-right:4px; text-align:left; cursor:pointer; }
+  input.num:focus, select.num:focus { outline:none; border-color:var(--sel); box-shadow:0 0 0 2px var(--sel-soft); }
 
   /* ---------- Onglets ---------- */
   .tabs { display:inline-flex; background:var(--hover); border-radius:5px; padding:2px; gap:2px; }
@@ -742,6 +744,15 @@ app.get("/", (_req, res) => {
             <label for="pageInput">Page à traiter<span class="hint">Un numéro de page, ou « all » pour tout le template.</span></label>
             <input type="text" class="num" name="page" id="pageInput" value="1" pattern="[0-9]+|all|ALL" title="Un numéro de page, ou all">
           </div>
+
+          <div class="field-row">
+            <label for="effortInput">Raisonnement de la passe 1<span class="hint">Plus haut = meilleure analyse, mais le raisonnement est facturé comme de la sortie.</span></label>
+            <select class="num" name="effort" id="effortInput">
+              <option value="low">low — rapide</option>
+              <option value="high" selected>high — par défaut</option>
+              <option value="max">max — template complexe</option>
+            </select>
+          </div>
         </div>
 
         <div class="sheet-head" style="border-top:1px solid var(--sheet-rule);border-bottom:none;align-items:center">
@@ -875,6 +886,9 @@ app.post("/run", upload.fields([{ name: "pdf", maxCount: 1 }, { name: "extraConf
   // "all" = reproduire le template entier (toutes les pages du PDF).
   const rawPage = String(req.body.page || "1").trim().toLowerCase();
   const pageNumber = rawPage === "all" ? "all" : (parseInt(rawPage, 10) || 1);
+  // Effort de raisonnement de la passe 1, choisi dans le formulaire.
+  const rawEffort = String(req.body.effort || "high").trim().toLowerCase();
+  const pass1Effort = ["low", "high", "max"].includes(rawEffort) ? rawEffort : "high";
 
   // extra_config peut venir soit d'un fichier uploadé, soit de JSON collé
   // dans le textarea (envoyé dans le champ caché extraConfigText) -- dans
@@ -898,12 +912,14 @@ app.post("/run", upload.fields([{ name: "pdf", maxCount: 1 }, { name: "extraConf
     status: "running", step: "extract", message: "Démarrage...", log: [],
     stream: { step: null, kind: null, text: "" },
     result: null, error: null, pdfUrl: "/uploads/" + path.basename(pdfFile.path), page: pageNumber,
+    effort: pass1Effort,
   };
   runs.set(runId, state);
 
   runPipeline({
     pdfPath: pdfFile.path,
     pageNumber,
+    pass1Effort,
     extraConfigPath,
     outDir,
     onProgress: (step, message) => {
@@ -926,6 +942,7 @@ app.post("/run", upload.fields([{ name: "pdf", maxCount: 1 }, { name: "extraConf
           JSON.stringify({
             pdfUrl: state.pdfUrl,
             page: state.page,
+            effort: state.effort,
             width: result.width,
             height: result.height,
             finishedAt: new Date().toISOString(),
@@ -1120,6 +1137,7 @@ app.get("/runs/:id", (req, res) => {
           <p class="rail-title">Ce run</p>
           <dl class="kv">
             <div class="kv-row"><dt>Page</dt><dd>${state.page}</dd></div>
+            ${state.effort ? `<div class="kv-row"><dt>Raisonnement</dt><dd>${esc(state.effort)}</dd></div>` : ""}
             <div class="kv-row"><dt>Démarré</dt><dd>${runWhen(runId)}</dd></div>
             <div class="kv-row"><dt>Écoulé</dt><dd id="elapsed">—</dd></div>
           </dl>
@@ -1316,6 +1334,7 @@ app.get("/runs/:id", (req, res) => {
         <p class="rail-title">Ce run</p>
         <dl class="kv">
           <div class="kv-row"><dt>Page</dt><dd>${state.page}</dd></div>
+          ${state.effort ? `<div class="kv-row"><dt>Raisonnement</dt><dd>${esc(state.effort)}</dd></div>` : ""}
           <div class="kv-row"><dt>Taille</dt><dd>${W}×${H}</dd></div>
           ${result.totalInputTokens != null ? `
             <div class="kv-row"><dt>Tokens in</dt><dd>${fmt(result.totalInputTokens)}</dd></div>

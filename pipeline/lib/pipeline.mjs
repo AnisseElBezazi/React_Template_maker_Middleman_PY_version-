@@ -164,6 +164,11 @@ function saveAssetsMap(rawResponseText, outDir) {
 export async function runPipeline({
   pdfPath,
   pageNumber = 1,
+  // Effort de raisonnement de la passe 1 (low/high/max). C'est la passe qui
+  // conçoit le composant : sur un template complexe, monter à `max` peut
+  // valoir son surcoût, alors que sur un template simple c'est de l'argent
+  // jeté -- le raisonnement est facturé comme de la sortie.
+  pass1Effort = "high",
   cvDataPath = path.join(PIPELINE_ROOT, "sample_cvdata.json"),
   extraConfigPath,
   onStream = () => {},
@@ -549,7 +554,7 @@ export async function runPipeline({
     { type: "text", text: pass1After },
     ...backgroundImageBlocks,
     ...extractedImageBlocks,
-  ], { effort: "high" }); // génération complète : c'est la passe qui mérite l'effort
+  ], { effort: pass1Effort }); // génération complète : c'est la passe qui mérite l'effort
   const jsx1 = extractCode(jsx1Raw);
   assertValidJsx(jsx1, "1");
   const jsx1Path = path.join(outDir, "attempt1.jsx");
