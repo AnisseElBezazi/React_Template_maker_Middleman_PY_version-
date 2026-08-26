@@ -1235,6 +1235,23 @@ app.get("/runs/:id", (req, res) => {
   const fmt = (n) => (n == null ? "—" : n.toLocaleString("fr-FR"));
   const passLabel = (p) => esc(p.label).replace(/ -- /g, " — ");
   const W = result.width, H = result.height;
+  // Hauteurs RÉELLES des deux planches. Sur un run multi-pages elles
+  // diffèrent de la hauteur d'une page -- et l'une de l'autre, puisque le
+  // moteur de pagination émet autant de pages que les données l'exigent, pas
+  // forcément autant que la cible en compte. Les figer à H écrasait la cible
+  // empilée dans la hauteur d'une seule page.
+  const pngHeight = (file) => {
+    try {
+      const fd = fs.openSync(file, "r");
+      const buf = Buffer.alloc(24);
+      fs.readSync(fd, buf, 0, 24, 0);
+      fs.closeSync(fd);
+      return buf.readUInt32BE(20) || null;
+    } catch { return null; }
+  };
+  const targetH = (targetForOnion && pngHeight(path.join(result.outDir, path.basename(targetForOnion)))) || H;
+  const previewH = pngHeight(finalPass.pngPath) || H;
+  const worldH = Math.max(targetH, previewH);
 
   // La capture cible fait exactement la taille du rendu : posées côte à côte à
   // la même échelle, les deux pages se comparent directement à l'oeil, et un
@@ -1276,15 +1293,15 @@ app.get("/runs/:id", (req, res) => {
       </div>
       ${runsRail(runId)}`,
     main: `<main class="viewport" id="viewport">
-      <div class="world" id="world" style="width:${W * 2 + BOARD_GAP}px;height:${H}px">
-        <div class="board" id="targetPane" style="left:0;width:${W}px;height:${H}px">
+      <div class="world" id="world" style="width:${W * 2 + BOARD_GAP}px;height:${worldH}px">
+        <div class="board" id="targetPane" style="left:0;width:${W}px;height:${targetH}px">
           <p class="frame-name">${state.pdfUrl ? "PDF cible" : "Capture cible"}<span class="fn-sub">${String(state.page).toLowerCase() === "all" ? `${targetPages(result.outDir).length} pages` : `page ${state.page}`}</span></p>
           ${targetContent}
           <div class="board-shield"></div>
         </div>
-        <div class="board" id="previewPane" style="left:${W + BOARD_GAP}px;width:${W}px;height:${H}px">
+        <div class="board" id="previewPane" style="left:${W + BOARD_GAP}px;width:${W}px;height:${previewH}px">
           <p class="frame-name">${passLabel(finalPass)}<span class="fn-sub">rendu live</span></p>
-          <iframe id="scaleFrame" title="Preview du composant généré" src="${toPublicUrl(finalPass.htmlPath)}" width="${W}" height="${H}" scrolling="no"></iframe>
+          <iframe id="scaleFrame" title="Preview du composant généré" src="${toPublicUrl(finalPass.htmlPath)}" width="${W}" height="${previewH}" scrolling="no"></iframe>
           <div class="board-shield"></div>
         </div>
       </div>
@@ -1359,7 +1376,7 @@ app.get("/runs/:id", (req, res) => {
       // entières, puis plonger au pixel sur un détail sans perdre l'autre.
       const vp = document.getElementById('viewport');
       const world = document.getElementById('world');
-      const WORLD_W = ${W * 2 + BOARD_GAP}, WORLD_H = ${H};
+      const WORLD_W = ${W * 2 + BOARD_GAP}, WORLD_H = ${worldH};
       // La barre du bas flotte au-dessus du plan de travail : le cadrage lui
       // réserve sa hauteur, sinon elle masque le pied des pages.
       const MAX_Z = 8, FIT_PAD = 56, DOCK_SAFE = 52;
@@ -1703,9 +1720,9 @@ app.get("/runs/:id", (req, res) => {
       /** Cadre la preview seule, à une échelle où les poignées sont saisissables. */
       function focusPreview() {
         const r = vp.getBoundingClientRect();
-        z = clampZ(Math.min((r.width - 64) / ${W}, (r.height - DOCK_SAFE - 64) / ${H}));
+        z = clampZ(Math.min((r.width - 64) / ${W}, (r.height - DOCK_SAFE - 64) / ${previewH}));
         tx = (r.width - ${W} * z) / 2 - (${W + BOARD_GAP}) * z;
-        ty = (r.height - DOCK_SAFE - ${H} * z) / 2;
+        ty = (r.height - DOCK_SAFE - ${previewH} * z) / 2;
         apply();
       }
 
