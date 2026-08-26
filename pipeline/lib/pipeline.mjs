@@ -346,10 +346,22 @@ export async function runPipeline({
     });
   }
 
-  async function callMoonshot(step, content, maxTokens) {
+  // Kimi K3 n'accepte que ces trois niveaux, et son défaut est "max" : ne
+  // rien envoyer revenait donc à raisonner au maximum sur TOUTES les passes,
+  // y compris l'audit de câblage qui est un contrôle mécanique. Or le
+  // raisonnement est facturé comme de la sortie, à 15 $/M -- il pesait 67 %
+  // du coût d'un run mesuré.
+  const MOONSHOT_EFFORTS = new Set(["low", "high", "max"]);
+
+  async function callMoonshot(step, content, maxTokens, effort) {
     const stream = await moonshot.chat.completions.create({
       model: MODEL,
       max_tokens: maxTokens,
+      reasoning_effort: MOONSHOT_EFFORTS.has(effort) ? effort : "high",
+      // Clé de cache stable par passe : le cache est facturé 0,30 $/M contre
+      // 3 $/M en entrée. Elle ne change rien au contenu envoyé, elle aide
+      // seulement le routage à retomber sur le même préfixe déjà en cache.
+      prompt_cache_key: `cvsmart-${step}`,
       stream: true,
       stream_options: { include_usage: true },
       messages: [{ role: "user", content: toOpenAIContent(content) }],
@@ -394,15 +406,15 @@ export async function runPipeline({
   const perPassUsage = [];
 
   async function callClaude(step, content, { maxTokens = 64000, effort = "high" } = {}) {
-    onProgress(step, `Appel à ${MODEL}${IS_MOONSHOT ? "" : ` (effort ${effort})`}...`);
+    onProgress(step, `Appel à ${MODEL} (effort ${effort})...`);
 
     if (IS_MOONSHOT) {
-      const r = await callMoonshot(step, content, maxTokens);
+      const r = await callMoonshot(step, content, maxTokens, effort);
       totalInputTokens += r.inputTokens;
       totalOutputTokens += r.outputTokens;
       totalCacheReadTokens += r.cacheRead;
       perPassUsage.push({
-        step, effort: "n/a",
+        step, effort,
         inputTokens: r.inputTokens, outputTokens: r.outputTokens,
         cacheReadTokens: r.cacheRead, cacheWriteTokens: 0,
         costUsd: Number(((r.inputTokens * RATE.in + r.outputTokens * RATE.out + r.cacheRead * 0.3) / 1e6).toFixed(4)),
