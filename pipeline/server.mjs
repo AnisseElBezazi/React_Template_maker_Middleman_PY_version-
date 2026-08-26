@@ -470,6 +470,25 @@ function layout(title, { crumb = "", status = "", actions = "", rail = "", main 
     position:absolute; top:0; background:#fff; box-shadow:var(--shadow-sheet);
   }
   .board > iframe, .board > img, .board > embed { display:block; border:none; width:100%; height:100%; }
+  /* Coupure entre deux pages. Le rendu et la cible empilent leurs pages avec
+     24px de blanc, invisible sur du papier blanc : on repeint cette bande à
+     la couleur du canevas et on y projette l'ombre des deux feuilles, pour
+     qu'une fin de page se lise d'un coup d'oeil. Purement visuel -- ni le
+     rendu ni le diff ne sont touchés. */
+  .page-gap {
+    position:absolute; left:0; right:0; z-index:2; pointer-events:none;
+    background:var(--canvas);
+    box-shadow:inset 0 7px 8px -8px rgba(0,0,0,.38), inset 0 -7px 8px -8px rgba(0,0,0,.38);
+  }
+  /* Trait net sur l'arête de chaque feuille, d'épaisseur constante à l'écran
+     quel que soit le zoom (--inv-z est posé par le contrôleur de zoom). La
+     bande porte la coupure de près, ces traits la portent de loin. */
+  .page-gap::before, .page-gap::after {
+    content:""; position:absolute; left:0; right:0;
+    height:calc(1px * var(--inv-z, 1)); background:rgba(0,0,0,.42);
+  }
+  .page-gap::before { top:0; }
+  .page-gap::after { bottom:0; }
   /* Le nom de frame garde une taille d'écran constante quel que soit le zoom. */
   .frame-name {
     position:absolute; left:0; bottom:100%; margin-bottom:7px; white-space:nowrap;
@@ -1249,6 +1268,22 @@ app.get("/runs/:id", (req, res) => {
       return buf.readUInt32BE(20) || null;
     } catch { return null; }
   };
+  // Bandes de coupure : une par jointure entre deux pages, positionnée sur
+  // les hauteurs réelles -- une page rendue ne fait pas forcément la hauteur
+  // du canevas (contenu qui déborde), donc on ne peut pas les déduire.
+  const PAGE_GAP = 24;
+  const gapStrips = (heights) => heights.slice(0, -1)
+    .map((_, i) => heights.slice(0, i + 1).reduce((a, b) => a + b, 0) + PAGE_GAP * i)
+    .map((top) => `<div class="page-gap" style="top:${top}px;height:${PAGE_GAP}px"></div>`)
+    .join("");
+  const targetGaps = gapStrips(targetPages(result.outDir).map((f) => pngHeight(f) || H));
+  const previewGaps = gapStrips(
+    fs.readdirSync(result.outDir)
+      .filter((f) => /^final-page-\d+\.png$/.test(f))
+      .sort((a, b) => parseInt(a.match(/\d+/)[0], 10) - parseInt(b.match(/\d+/)[0], 10))
+      .map((f) => pngHeight(path.join(result.outDir, f)) || H)
+  );
+
   const targetH = (targetForOnion && pngHeight(path.join(result.outDir, path.basename(targetForOnion)))) || H;
   const previewH = pngHeight(finalPass.pngPath) || H;
   const worldH = Math.max(targetH, previewH);
@@ -1297,11 +1332,13 @@ app.get("/runs/:id", (req, res) => {
         <div class="board" id="targetPane" style="left:0;width:${W}px;height:${targetH}px">
           <p class="frame-name">${state.pdfUrl ? "PDF cible" : "Capture cible"}<span class="fn-sub">${String(state.page).toLowerCase() === "all" ? `${targetPages(result.outDir).length} pages` : `page ${state.page}`}</span></p>
           ${targetContent}
+          ${targetGaps}
           <div class="board-shield"></div>
         </div>
         <div class="board" id="previewPane" style="left:${W + BOARD_GAP}px;width:${W}px;height:${previewH}px">
           <p class="frame-name">${passLabel(finalPass)}<span class="fn-sub">rendu live</span></p>
           <iframe id="scaleFrame" title="Preview du composant généré" src="${toPublicUrl(finalPass.htmlPath)}" width="${W}" height="${previewH}" scrolling="no"></iframe>
+          ${previewGaps}
           <div class="board-shield"></div>
         </div>
       </div>
@@ -1423,6 +1460,10 @@ app.get("/runs/:id", (req, res) => {
         // Les noms de cadre gardent leur taille à l'écran, comme dans un
         // éditeur : illisibles à 20 %, énormes à 400 % sinon.
         for (const n of frameNames()) n.style.transform = 'scale(' + (1 / z) + ')';
+        // Les traits de coupure gardent eux aussi une épaisseur d'écran
+        // constante : à 10 % de zoom, une bande de 24px n'en fait plus que 2
+        // et la fin de page redevient invisible.
+        world.style.setProperty('--inv-z', String(1 / z));
         zVal.textContent = Math.round(z * 100) + ' %';
       }
 
