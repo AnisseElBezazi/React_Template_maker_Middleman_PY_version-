@@ -18,7 +18,7 @@ export function PaginatedEntryPages({
       <div style={{ position: 'fixed', top: 0, left: -99999, width: contentWidthPx }} aria-hidden="true">
         {heading && <p ref={headingRef} className={headingClassName}>{heading}</p>}
         {items.map((item, index) => (
-          <div key={item.key} ref={(el) => { itemsRef.current[index] = el }}>
+          <div key={item.key} ref={(el) => { itemsRef.current[index] = el }} style={{ display: 'flow-root' }}>
             {item.render()}
           </div>
         ))}
