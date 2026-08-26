@@ -15,6 +15,7 @@ import { spawnSync } from "child_process";
 import { runPipeline } from "./lib/pipeline.mjs";
 import { applyImageEdits, applyTextEdits, applyClassEdits } from "./apply_image_edits.mjs";
 import { toDbFormat } from "./to_db_format.mjs";
+import { stackedTarget, targetPages } from "./stack_targets.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config();
@@ -82,14 +83,19 @@ function rehydrateRun(runId) {
 
   // Le PDF d'origine peut avoir été supprimé du dossier uploads ; la capture
   // cible, elle, vit dans le dossier du run et suffit pour comparer.
-  const target = fs.readdirSync(outDir).find((f) => /^target-\d+\.png$/.test(f));
+  // Dimensions : celles d'UNE page, pas de l'empilement -- elles servent de
+  // taille de canevas au rendu et à l'éditeur.
+  const firstTarget = targetPages(outDir)[0];
   let { width, height } = meta;
-  if ((!width || !height) && target) {
-    const buf = fs.readFileSync(path.join(outDir, target));
+  if ((!width || !height) && firstTarget) {
+    const buf = fs.readFileSync(firstTarget);
     width = buf.readUInt32BE(16);
     height = buf.readUInt32BE(20);
   }
-  const targetUrl = target ? toPublicUrl(path.join(outDir, target)) : null;
+  // Sur un run multi-pages, on affiche toutes les pages empilées : n'en
+  // montrer qu'une donnait l'impression que le reste du template manquait.
+  const stacked = firstTarget ? stackedTarget(outDir) : null;
+  const targetUrl = stacked ? toPublicUrl(stacked) : null;
 
   return {
     status: "done",
@@ -1220,8 +1226,8 @@ app.get("/runs/:id", (req, res) => {
   // retrouve sur le disque.
   const targetForOnion = state.targetUrl || (() => {
     try {
-      const f = fs.readdirSync(result.outDir).find((n) => /^target-\d+\.png$/.test(n));
-      return f ? toPublicUrl(path.join(result.outDir, f)) : null;
+      const stacked = stackedTarget(result.outDir);
+      return stacked ? toPublicUrl(stacked) : null;
     } catch { return null; }
   })();
   const finalPass = result.passes.at(-1);
@@ -1237,14 +1243,14 @@ app.get("/runs/:id", (req, res) => {
   const targetContent = targetForOnion
     ? `<img src="${targetForOnion}" alt="Capture de la page cible" draggable="false">`
     : state.pdfUrl
-      ? `<embed src="${state.pdfUrl}#page=${state.page}&toolbar=0" type="application/pdf">`
+      ? `<embed src="${state.pdfUrl}${String(state.page).toLowerCase() === "all" ? "#toolbar=0" : `#page=${state.page}&toolbar=0`}" type="application/pdf">`
       : `<p class="empty">Cible indisponible.</p>`;
 
   res.send(layout("Résultat", {
     crumb,
     status: `<span class="badge done">Terminé</span>`,
     actions: `
-      ${state.pdfUrl ? `<a class="btn ghost" href="${state.pdfUrl}#page=${state.page}" target="_blank" rel="noopener">${ICON.pdf}<span>PDF</span></a>` : ""}
+      ${state.pdfUrl ? `<a class="btn ghost" href="${state.pdfUrl}${String(state.page).toLowerCase() === "all" ? "" : `#page=${state.page}`}" target="_blank" rel="noopener">${ICON.pdf}<span>PDF</span></a>` : ""}
       <a class="btn primary" href="/runs/${runId}/download">${ICON.download}<span>Télécharger le .jsx</span></a>
       ${backIcon}`,
     rail: `<div class="rail-group">
@@ -1272,7 +1278,7 @@ app.get("/runs/:id", (req, res) => {
     main: `<main class="viewport" id="viewport">
       <div class="world" id="world" style="width:${W * 2 + BOARD_GAP}px;height:${H}px">
         <div class="board" id="targetPane" style="left:0;width:${W}px;height:${H}px">
-          <p class="frame-name">${state.pdfUrl ? "PDF cible" : "Capture cible"}<span class="fn-sub">page ${state.page}</span></p>
+          <p class="frame-name">${state.pdfUrl ? "PDF cible" : "Capture cible"}<span class="fn-sub">${String(state.page).toLowerCase() === "all" ? `${targetPages(result.outDir).length} pages` : `page ${state.page}`}</span></p>
           ${targetContent}
           <div class="board-shield"></div>
         </div>
