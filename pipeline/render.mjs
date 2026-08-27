@@ -11,6 +11,7 @@ import fs from "fs";
 import path from "path";
 import puppeteer from "puppeteer";
 import { fileURLToPath } from "url";
+import { compileTailwind } from "./compile_tailwind.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -128,41 +129,6 @@ const cvSmartAliasPlugin = {
   },
 };
 
-function compileTailwind() {
-  // Chemin UNIQUE par rendu : plusieurs rendus peuvent tourner en parallèle
-  // (traitement de templates par lots). Avec un fichier partagé, l'un lisait
-  // le CSS pendant que l'autre le réécrivait -- classes manquantes, images à
-  // leur taille naturelle, mises en page cassées de façon intermittente et
-  // très difficile à relier à sa cause.
-  const outCss = path.join(__dirname, "out", `.tailwind-${process.pid}-${Date.now()}.css`);
-  fs.mkdirSync(path.dirname(outCss), { recursive: true });
-  const result = spawnSync(
-    path.join(__dirname, "node_modules", ".bin", "tailwindcss"),
-    [
-      "-i", path.join(__dirname, "tailwind_input.css"),
-      "-o", outCss,
-      // Le fichier rendu est ajouté explicitement au scan : Tailwind ne
-      // génère que les classes qu'il VOIT, donc un composant situé hors de
-      // out/ (fichier temporaire, test ponctuel) se retrouvait rendu sans
-      // aucune de ses classes utilitaires -- les images reprenaient alors
-      // leur taille naturelle, ce qui ressemble à un bug de mise en page.
-      // On ne scanne QUE le composant rendu et le moteur partagé. Scanner
-      // tout out/ faisait relire les JSX de chaque run précédent : temps de
-      // compilation croissant à mesure que les runs s'accumulent, et CSS
-      // pollué par les classes des autres templates.
-      "--content", `${jsxAbs},${TEMPLATES_ROOT}/**/*.{jsx,js}`,
-      "--minify",
-    ],
-    { encoding: "utf-8", cwd: __dirname }
-  );
-  if (result.status !== 0) {
-    console.error("TAILWIND_ERROR:" + (result.stderr || result.stdout));
-    return "";
-  }
-  const css = fs.readFileSync(outCss, "utf-8");
-  try { fs.unlinkSync(outCss); } catch { /* fichier temporaire, sans importance */ }
-  return css;
-}
 
 const sharedCssPath = path.join(TEMPLATES_ROOT, "visianSmartCv.css");
 const sharedCss = fs.existsSync(sharedCssPath) ? fs.readFileSync(sharedCssPath, "utf-8") : "";
@@ -221,7 +187,18 @@ try {
   fs.unlinkSync(tmpEntry);
 }
 
-const tailwindCss = compileTailwind();
+// On ne scanne QUE le composant rendu et le moteur partagé. Tailwind ne
+// génère que les classes qu'il VOIT : un composant situé hors de out/
+// (fichier temporaire, test ponctuel) se retrouvait rendu sans aucune de ses
+// classes utilitaires, les images reprenant alors leur taille naturelle -- ce
+// qui ressemble à un bug de mise en page. Scanner tout out/ faisait à
+// l'inverse relire les JSX de chaque run précédent : compilation de plus en
+// plus lente et CSS pollué par les classes des autres templates.
+const { css: tailwindCss, error: tailwindError } = compileTailwind({
+  contentGlobs: `${jsxAbs},${TEMPLATES_ROOT}/**/*.{jsx,js}`,
+  inputCss: path.join(__dirname, "tailwind_input.css"),
+});
+if (tailwindError) console.error("TAILWIND_ERROR:" + tailwindError);
 // Version du schéma d'étiquetage (data-cvimg / data-cvtext / data-cvcls).
 // L'éditeur s'en sert pour savoir qu'un rendu ancien doit être refait :
 // sans ce marqueur, un HTML produit avant l'ajout d'un type de repère

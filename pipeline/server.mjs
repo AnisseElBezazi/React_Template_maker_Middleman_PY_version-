@@ -16,6 +16,7 @@ import { runPipeline } from "./lib/pipeline.mjs";
 import { applyImageEdits, applyTextEdits, applyClassEdits } from "./apply_image_edits.mjs";
 import { toDbFormat } from "./to_db_format.mjs";
 import { stackedTarget, targetPages } from "./stack_targets.mjs";
+import { compileTailwind } from "./compile_tailwind.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config();
@@ -1055,6 +1056,38 @@ app.get("/runs/:id/download", (req, res) => {
     db = { error: err.message };
   }
 
+  // CSS compilé AU MOMENT DU TÉLÉCHARGEMENT, pas à la génération : le
+  // template peut avoir été retouché dans l'éditeur visuel entre les deux, et
+  // un CSS compilé trop tôt n'aurait pas les classes ajoutées depuis.
+  //
+  // L'app ne compile plus rien pour ces templates -- le mécanisme qui
+  // scannait les templates en base pour alimenter le bundle Tailwind global a
+  // été supprimé. Chaque template doit donc arriver avec son CSS complet.
+  //
+  // Périmètre du scan : le composant et le MOTEUR seul. Scanner tout
+  // "templates copy" embarquerait les classes de l'exemple Visian, qui
+  // gonfleraient un css_source destiné à être injecté tel quel.
+  let cssSource = null;
+  let cssError = null;
+  if (!db.error) {
+    const scanPath = path.join(OUT_ROOT, `.css-scan-${process.pid}-${Date.now()}.jsx`);
+    try {
+      fs.mkdirSync(OUT_ROOT, { recursive: true });
+      fs.writeFileSync(scanPath, db.code);
+      const out = compileTailwind({
+        contentGlobs: `${scanPath},${TEMPLATES_ROOT}/engine/**/*.{jsx,js}`,
+        inputCss: path.join(__dirname, "tailwind_db_input.css"),
+        configPath: path.join(__dirname, "tailwind.db.config.cjs"),
+      });
+      cssSource = out.css;
+      cssError = out.error;
+    } catch (err) {
+      cssError = err.message;
+    } finally {
+      try { fs.unlinkSync(scanPath); } catch { /* fichier temporaire */ }
+    }
+  }
+
   const assetLines = db.assets?.length
     ? db.assets.map((a) => `  ${a.key.padEnd(16)} <- assets/${a.key}${path.extname(a.file) || ".png"}`).join("\n")
     : "  (aucune image)";
@@ -1064,7 +1097,9 @@ app.get("/runs/:id/download", (req, res) => {
 CONTENU
 - ${componentName}.jsx        le composant AU FORMAT DE L'APP : évalué comme corps de
                               fonction recevant React et engine, images lues dans l'objet
-                              assets. C'est ce fichier qui va en base.
+                              assets. C'est ce fichier qui va dans jsx_source.
+- ${componentName}.css        le CSS Tailwind DÉJÀ COMPILÉ de ce template, à mettre
+                              tel quel dans css_source.
 - assets/                     les images du template, nommées par leur clé.
 - assets-manifest.json        clé -> fichier, pour l'insertion en base.
 - preview/${componentName}.jsx  la version à imports utilisée par la preview locale
@@ -1078,8 +1113,18 @@ ${assetLines}
   principal avant tout rendu enfant : les sous-composants y accèdent sans recevoir la
   prop. C'est correct ici parce qu'un asset appartient au TEMPLATE, pas au CV -- il ne
   change pas d'un candidat à l'autre.
-- Le CSS éventuel (xxxSmartCv.css) n'est pas généré : à écrire si le template a besoin
-  de classes hors Tailwind, comme l'exemple Visian.
+- Le CSS est compilé au moment du téléchargement, depuis le composant tel qu'il est
+  à cet instant : les retouches faites dans l'éditeur visuel y sont donc incluses.
+- Il ne contient QUE des utilities, jamais base ni components : ces directives
+  produisent un reset global qui casserait le style du reste de l'app à l'injection.
+- Chaque règle est scopée en \`.cv-smart-scope .classe\` (option important de Tailwind),
+  pour que le CSS du template ne fuie pas sur le reste de l'app.
+- Côté app, l'injection se fait sans aucune compilation :
+      <div className="cv-smart-scope">
+        <style>{template.css_source}</style>
+        <Component cvData={cvData} assets={assets} />
+      </div>${cssError ? `
+- ATTENTION : la compilation du CSS a échoué (${cssError.slice(0, 200)}), le fichier .css est absent.` : ""}
 - Ce composant n'a été validé que dans le harness local (React seul + données factices),
   pas dans l'app réelle.
 `;
@@ -1093,6 +1138,7 @@ ${assetLines}
     archive.append(`La conversion vers le format base a échoué : ${db.error}\n`, { name: "CONVERSION-ECHOUEE.txt" });
   } else {
     archive.append(db.code, { name: `${componentName}.jsx` });
+    if (cssSource) archive.append(cssSource, { name: `${componentName}.css` });
     archive.append(
       JSON.stringify(Object.fromEntries(db.assets.map((a) => [a.key, `assets/${a.key}${path.extname(a.file) || ".png"}`])), null, 2),
       { name: "assets-manifest.json" }
