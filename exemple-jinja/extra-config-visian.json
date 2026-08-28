@@ -1,0 +1,392 @@
+{
+    "cv_name": "personal_information.full_name",
+    "cv_job_title": "personal_information.job_title",
+    "cv_file_prefix": "personal_information.trigram",
+    "dt_boond_config": {
+        "dt_boond_skills": {
+            "source": [
+                {
+                    "source": "technical_skills",
+                    "data_type": "key_values_array",
+                    "display_name": "Compétences techniques:"
+                },
+                {
+                    "source": "functional_skills",
+                    "data_type": "key_values_array",
+                    "display_name": "Compétences fonctionnelles:"
+                }
+            ],
+            "join_string": "\n"
+        },
+        "dt_boond_diplomas": {
+            "source": [
+                {
+                    "items": {
+                        "source": [
+                            {
+                                "source": "name",
+                                "data_type": "static"
+                            },
+                            {
+                                "source": "dates",
+                                "data_type": "static"
+                            },
+                            {
+                                "source": "school",
+                                "data_type": "static"
+                            }
+                        ],
+                        "join_string": " - "
+                    },
+                    "source": "formations",
+                    "data_type": "section_array",
+                    "join_string": "\n"
+                },
+                {
+                    "items": {
+                        "source": [
+                            {
+                                "source": "name",
+                                "data_type": "static"
+                            },
+                            {
+                                "source": "dates",
+                                "data_type": "static"
+                            }
+                        ],
+                        "join_string": " - "
+                    },
+                    "source": "certifications",
+                    "data_type": "section_array",
+                    "join_string": "\n"
+                }
+            ],
+            "join_string": "\n"
+        },
+        "dt_boond_references": {
+            "title": {
+                "source": "job_title",
+                "data_type": "static"
+            },
+            "skills": {
+                "source": "technical_environment",
+                "data_type": "static"
+            },
+            "company": {
+                "source": "company",
+                "data_type": "static"
+            },
+            "description": {
+                "source": [
+                    {
+                        "source": "description",
+                        "data_type": "array"
+                    }
+                ],
+                "join_string": "\n"
+            }
+        },
+        "import_cv_job_title": "personal_information.job_title"
+    },
+    "frontend_cvparser_config": [
+        {
+            "items": [
+                {
+                    "data_name": "trigram",
+                    "data_type": "static",
+                    "display_name": "Trigramme"
+                },
+                {
+                    "data_name": "first_name",
+                    "data_type": "static",
+                    "display_name": "Prénom"
+                },
+                {
+                    "data_name": "last_name",
+                    "data_type": "static",
+                    "display_name": "Nom"
+                },
+                {
+                    "data_name": "nb_exp_years",
+                    "data_type": "static",
+                    "display_name": "Expérience"
+                },
+                {
+                    "data_name": "job_title",
+                    "data_type": "static",
+                    "display_name": "Titre du candidat"
+                },
+                {
+                    "data_name": "main_tools",
+                    "data_type": "static",
+                    "display_name": "Compétences principales"
+                },
+                {
+                    "data_name": "introduction",
+                    "data_type": "static",
+                    "display_name": "Introduction"
+                }
+            ],
+            "allow_add": false,
+            "data_name": "personal_information",
+            "data_type": "ordered_array",
+            "display_name": "Présentation"
+        },
+        {
+            "allow_add": true,
+            "data_name": "experiences_summary",
+            "data_type": "section_array",
+            "display_name": "Résumé des expériences",
+            "section_config": {
+                "items": [
+                    {
+                        "data_name": "company",
+                        "data_type": "static",
+                        "display_name": "Entreprise"
+                    },
+                    {
+                        "data_name": "job_title",
+                        "data_type": "static",
+                        "display_name": "Titre du poste"
+                    },
+                    {
+                        "data_name": "period",
+                        "data_type": "static",
+                        "display_name": "Période"
+                    },
+                    {
+                        "data_name": "technical_environment",
+                        "data_type": "static",
+                        "display_name": "Technologies utilisées"
+                    },
+                    {
+                        "data_name": "description",
+                        "data_type": "array",
+                        "display_name": "Description"
+                    }
+                ],
+                "data_type": "ordered_array",
+                "section_title": "Expérience",
+                "section_display": "vertical",
+                "delete_placeholder": "Supprimer l'expérience",
+                "increment_section_title": true
+            }
+        },
+        {
+            "allow_add": true,
+            "data_name": "technical_skills",
+            "data_type": "key_values_array",
+            "enable_tags": true,
+            "item_config": {
+                "key": "name",
+                "value": "content",
+                "key_config": {
+                    "placeholder": "Catégorie de compétences"
+                },
+                "value_config": {
+                    "data_type": "array",
+                    "placeholder": "Description"
+                },
+                "delete_placeholder": "Supprimer la compétence technique"
+            },
+            "display_name": "Compétences techniques"
+        },
+        {
+            "allow_add": true,
+            "data_name": "functional_skills",
+            "data_type": "key_values_array",
+            "enable_tags": true,
+            "item_config": {
+                "key": "name",
+                "value": "content",
+                "key_config": {
+                    "placeholder": "Catégorie de compétences"
+                },
+                "value_config": {
+                    "data_type": "array",
+                    "placeholder": "Description"
+                },
+                "delete_placeholder": "Supprimer la compétence fonctionnelle"
+            },
+            "display_name": "Compétences fonctionnelles"
+        },
+        {
+            "allow_add": true,
+            "data_name": "languages",
+            "data_type": "key_values_choices",
+            "item_config": {
+                "key": "name",
+                "value": "content",
+                "key_config": {
+                    "choices": [
+                        "Français",
+                        "Anglais",
+                        "Allemand",
+                        "Espagnol",
+                        "Italien",
+                        "Néerlandais",
+                        "Portugais",
+                        "Russe",
+                        "Chinois",
+                        "Japonais",
+                        "Arabe",
+                        "Kabyle"
+                    ],
+                    "data_type": "choices",
+                    "placeholder": "Langue"
+                },
+                "value_config": {
+                    "choices": [
+                        "Technique",
+                        "Opérationnel",
+                        "Courant"
+                    ],
+                    "data_type": "choices",
+                    "placeholder": "Niveau"
+                },
+                "delete_placeholder": "Supprimer la langue"
+            },
+            "display_name": "Langues"
+        },
+        {
+            "allow_add": true,
+            "data_name": "formations",
+            "data_type": "section_array",
+            "display_name": "Diplômes",
+            "section_config": {
+                "items": [
+                    {
+                        "data_name": "name",
+                        "data_type": "static",
+                        "display_name": "Intitulé"
+                    },
+                    {
+                        "data_name": "dates",
+                        "data_type": "static",
+                        "display_name": "Dates"
+                    },
+                    {
+                        "data_name": "school",
+                        "data_type": "static",
+                        "display_name": "École"
+                    }
+                ],
+                "data_type": "ordered_array",
+                "section_title": "Diplôme",
+                "section_display": "vertical",
+                "delete_placeholder": "Supprimer le diplôme",
+                "increment_section_title": true
+            }
+        },
+        {
+            "allow_add": true,
+            "data_name": "certifications",
+            "data_type": "section_array",
+            "display_name": "Certifications",
+            "section_config": {
+                "items": [
+                    {
+                        "data_name": "name",
+                        "data_type": "static",
+                        "display_name": "Intitulé"
+                    },
+                    {
+                        "data_name": "dates",
+                        "data_type": "static",
+                        "display_name": "Dates"
+                    }
+                ],
+                "data_type": "ordered_array",
+                "section_title": "Certification",
+                "section_display": "horizontal",
+                "delete_placeholder": "Supprimer la certification",
+                "increment_section_title": true
+            }
+        },
+        {
+            "allow_add": true,
+            "data_name": "experiences",
+            "data_type": "section_array",
+            "display_name": "Expériences",
+            "section_config": {
+                "items": [
+                    {
+                        "data_name": "job_title",
+                        "data_type": "static",
+                        "display_name": "Poste"
+                    },
+                    {
+                        "data_name": "period",
+                        "data_type": "static",
+                        "display_name": "Dates"
+                    },
+                    {
+                        "data_name": "company",
+                        "data_type": "static",
+                        "display_name": "Entreprise"
+                    },
+                    {
+                        "data_name": "projects_context",
+                        "data_type": "static",
+                        "display_name": "Projet"
+                    },
+                    {
+                        "data_name": "description",
+                        "data_type": "array",
+                        "display_name": "Description"
+                    },
+                    {
+                        "data_name": "technical_environment",
+                        "data_type": "static",
+                        "display_name": "Technologies utilisées"
+                    }
+                ],
+                "data_type": "ordered_array",
+                "section_title": "Expérience",
+                "section_display": "vertical",
+                "delete_placeholder": "Supprimer l'expérience",
+                "increment_section_title": true
+            }
+        },
+        {
+            "allow_add": true,
+            "data_name": "personal_projects",
+            "data_type": "section_array",
+            "display_name": "Projets personnels",
+            "section_config": {
+                "items": [
+                    {
+                        "data_name": "name",
+                        "data_type": "static",
+                        "display_name": "Nom du projet"
+                    },
+                    {
+                        "data_name": "context",
+                        "data_type": "static",
+                        "display_name": "Contexte"
+                    },
+                    {
+                        "data_name": "job_title",
+                        "data_type": "static",
+                        "display_name": "Poste"
+                    },
+                    {
+                        "data_name": "technical_environment",
+                        "data_type": "static",
+                        "display_name": "Technologies utilisées"
+                    },
+                    {
+                        "data_name": "description",
+                        "data_type": "array",
+                        "display_name": "Description"
+                    }
+                ],
+                "data_type": "ordered_array",
+                "section_title": "Projet",
+                "section_display": "vertical",
+                "delete_placeholder": "Supprimer le projet",
+                "increment_section_title": true
+            }
+        }
+    ]
+}

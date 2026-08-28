@@ -1,0 +1,445 @@
+  :root {
+    --bg:#ffffff; --bg-2:#fafafa; --hover:#f2f2f2; --active:#e9e9e9;
+    --line:#e6e6e6; --line-2:#d9d9d9;
+    --canvas:#f0f0f0; --canvas-dot:#dcdcdc;
+    --tx:#1e1e1e; --tx-2:#5c5c5c; --tx-3:#767676;
+    --sel:#0d99ff; --sel-tx:#0b7ac0; --sel-soft:rgba(13,153,255,.10);
+    --ok:#14ae5c; --ok-tx:#0f8a4d; --warn:#ffcd29; --warn-tx:#8a6100;
+    --bad:#f24822; --bad-tx:#c3341b;
+    --r:4px; --r-lg:6px;
+    --ui:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    --mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+    --shadow-sheet:0 1px 2px rgba(0,0,0,.07), 0 8px 24px rgba(0,0,0,.07);
+    --shadow-pop:0 2px 6px rgba(0,0,0,.10), 0 12px 32px rgba(0,0,0,.14);
+  }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body {
+    margin:0; background:var(--bg); color:var(--tx);
+    font-family:var(--ui); font-size:12px; line-height:1.5;
+    -webkit-font-smoothing:antialiased; letter-spacing:-0.006em;
+    display:grid; grid-template-rows:40px minmax(0,1fr); overflow:hidden;
+  }
+  a { color:var(--sel-tx); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  button, input, textarea, select { font:inherit; letter-spacing:inherit; }
+  :focus-visible { outline:2px solid var(--sel); outline-offset:1px; border-radius:2px; }
+  ::selection { background:var(--sel-soft); }
+
+  /* ---------- Barre d'outils ---------- */
+  .toolbar {
+    display:flex; align-items:center; gap:10px; padding:0 10px 0 12px;
+    background:var(--bg); border-bottom:1px solid var(--line); min-width:0; z-index:20;
+  }
+  .toolbar .logo { flex:none; display:block; }
+  .brand { display:flex; align-items:center; gap:8px; flex:none; }
+  .brand b { font-size:12px; font-weight:600; letter-spacing:-0.012em; }
+  .tb-sep { width:1px; height:18px; background:var(--line); flex:none; }
+  .crumb { display:flex; align-items:center; gap:8px; min-width:0; color:var(--tx-3); font-size:11.5px; }
+  .crumb .cur { color:var(--tx-2); }
+  .tb-right { margin-left:auto; display:flex; align-items:center; gap:8px; flex:none; }
+
+  .idchip {
+    font-family:var(--mono); font-size:10.5px; color:var(--tx-3);
+    background:var(--hover); border-radius:3px; padding:2px 6px;
+    overflow-wrap:anywhere; max-width:230px;
+  }
+
+  /* ---------- Boutons ---------- */
+  .btn {
+    display:inline-flex; align-items:center; justify-content:center; gap:6px;
+    height:28px; padding:0 10px; border-radius:var(--r); cursor:pointer;
+    background:var(--hover); color:var(--tx); border:1px solid transparent;
+    font-size:11.5px; font-weight:500; white-space:nowrap;
+    transition:background .14s ease, border-color .14s ease, color .14s ease;
+  }
+  .btn:hover { background:var(--active); text-decoration:none; }
+  .btn svg { flex:none; }
+  .btn.primary { background:var(--sel); color:#fff; }
+  .btn.primary:hover { background:#0b86e0; }
+  .btn.ghost { background:transparent; color:var(--tx-2); }
+  .btn.ghost:hover { background:var(--hover); color:var(--tx); }
+  .btn.active { background:var(--sel-soft); color:var(--sel-tx); border-color:var(--sel); }
+  .btn:disabled { background:var(--hover); color:#adadad; cursor:not-allowed; }
+  .btn.primary:disabled { background:#e9e9e9; color:#a3a3a3; }
+  .btn.icon { width:28px; padding:0; }
+  .btn.outline { background:#fff; border-color:var(--line-2); }
+  .btn.outline:hover { background:var(--hover); }
+
+  /* ---------- Pastilles d'état ---------- */
+  .badge {
+    display:inline-flex; align-items:center; gap:5px; height:20px; padding:0 8px;
+    border-radius:3px; font-size:10.5px; font-weight:600; letter-spacing:.01em;
+    background:var(--hover); color:var(--tx-2);
+  }
+  .badge::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; flex:none; }
+  .badge.running { color:var(--warn-tx); background:rgba(255,205,41,.20); }
+  .badge.running::before { animation:pulse 1.4s ease-in-out infinite; }
+  .badge.done { color:var(--ok-tx); background:rgba(20,174,92,.12); }
+  .badge.error { color:var(--bad-tx); background:rgba(242,72,34,.11); }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.25; } }
+
+  /* ---------- Structure ---------- */
+  .workbench {
+    display:grid; grid-template-columns:216px minmax(0,1fr) 0;
+    min-height:0; transition:grid-template-columns .18s ease;
+  }
+  body.editing-open .workbench { grid-template-columns:216px minmax(0,1fr) 248px; }
+  .rail {
+    background:var(--bg); border-right:1px solid var(--line);
+    overflow-y:auto; padding:12px 0 20px; min-width:0;
+  }
+  .rail-title {
+    display:flex; align-items:center; gap:6px; padding:0 12px; margin:0 0 8px;
+    font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.07em; color:var(--tx-3);
+  }
+  .rail-title svg { opacity:.7; }
+  .rail-group + .rail-group { margin-top:18px; padding-top:16px; border-top:1px solid var(--line); }
+
+  .runlist { list-style:none; margin:0; padding:0 6px; }
+  .runlist a {
+    display:block; padding:6px 8px; border-radius:var(--r); color:var(--tx-2);
+    text-decoration:none; transition:background .14s ease;
+  }
+  .runlist a:hover { background:var(--hover); text-decoration:none; }
+  .runlist a[aria-current] { background:var(--sel-soft); }
+  .runlist .when { font-size:11.5px; font-weight:500; color:var(--tx); }
+  .runlist .rid { display:block; font-family:var(--mono); font-size:10px; color:var(--tx-3); overflow-wrap:anywhere; margin-top:1px; }
+  .runlist .tag { font-size:9.5px; font-weight:600; color:var(--ok-tx); letter-spacing:.04em; text-transform:uppercase; margin-left:6px; }
+
+  .kv { padding:0 12px; margin:0; }
+  .kv-row { display:flex; justify-content:space-between; gap:10px; font-size:11.5px; line-height:1.9; }
+  .kv-row dt { color:var(--tx-3); }
+  .kv-row dd { margin:0; color:var(--tx-2); font-family:var(--mono); font-size:10.5px; text-align:right; overflow-wrap:anywhere; }
+
+  .passlist { list-style:none; margin:0; padding:0 6px; }
+  .passlist a {
+    display:flex; align-items:center; gap:8px; padding:5px 8px; border-radius:var(--r);
+    color:var(--tx-2); font-size:11.5px; transition:background .14s ease;
+  }
+  .passlist a:hover { background:var(--hover); color:var(--tx); text-decoration:none; }
+  .passlist .n { font-family:var(--mono); font-size:10px; color:var(--tx-3); flex:none; }
+  .passlist li.cur > span {
+    display:flex; align-items:center; gap:8px; padding:5px 8px; border-radius:var(--r);
+    background:var(--sel-soft); color:var(--sel-tx); font-size:11.5px; font-weight:500;
+  }
+  .passlist li.cur .n { color:var(--sel-tx); }
+
+  /* ---------- Plan de travail ---------- */
+  .canvas {
+    background:var(--canvas); overflow:auto; min-width:0; position:relative;
+    background-image:radial-gradient(var(--canvas-dot) 1px, transparent 1px);
+    background-size:16px 16px; background-position:-1px -1px;
+  }
+  .canvas-pad { padding:24px; min-height:100%; display:flex; flex-direction:column; }
+  .canvas-center { align-items:center; justify-content:flex-start; }
+
+  /* Feuille flottante : l'unité de contenu du plan de travail. */
+  .sheet {
+    background:#fff; border-radius:var(--r-lg); box-shadow:var(--shadow-sheet);
+    width:100%; max-width:560px;
+  }
+  .sheet-head {
+    display:flex; align-items:flex-start; justify-content:space-between; gap:16px;
+    padding:16px 20px; border-bottom:1px solid var(--line);
+  }
+  .sheet-head h2 { margin:0; font-size:13px; font-weight:600; letter-spacing:-0.012em; }
+  .sheet-head p { margin:3px 0 0; font-size:11.5px; color:var(--tx-3); }
+  .sheet-head svg { width:18px; height:18px; }
+  .sheet-body { padding:18px 20px; }
+  .sheet-foot { padding:14px 20px; border-top:1px solid var(--line); }
+  .step-n {
+    display:inline-flex; align-items:center; justify-content:center; width:17px; height:17px;
+    border-radius:3px; background:var(--hover); color:var(--tx-2);
+    font-family:var(--mono); font-size:10px; font-weight:600; margin-right:8px; flex:none;
+  }
+  .sec { display:flex; align-items:center; margin:0 0 10px; font-size:12px; font-weight:600; color:var(--tx); }
+  .sec .opt { font-weight:400; color:var(--tx-3); margin-left:5px; }
+
+  /* ---------- Dépôt de fichier ---------- */
+  #dropzone {
+    border:1.5px dashed var(--line-2); border-radius:var(--r-lg); padding:34px 20px; text-align:center;
+    cursor:pointer; background:var(--bg-2); transition:border-color .14s ease, background .14s ease;
+  }
+  #dropzone:hover { border-color:#b4b4b4; }
+  #dropzone.drag { border-color:var(--sel); background:var(--sel-soft); }
+  #dropzone.has-file { border-style:solid; border-color:var(--sel); background:var(--sel-soft); text-align:left; }
+  #dropzone .dz-icon { color:#8f8f8f; display:flex; }
+  #dropzone .dz-icon svg { width:22px; height:22px; }
+  #dropzone.has-file .dz-icon { color:var(--sel); }
+  #dropzone .dz-inner { display:flex; align-items:center; gap:12px; justify-content:center; }
+  #dropzone.has-file .dz-inner { justify-content:flex-start; }
+  #dropzone .big { font-size:12.5px; font-weight:600; color:var(--tx); margin:0; overflow-wrap:anywhere; }
+  #dropzone p.sub { color:var(--tx-3); margin:2px 0 0; font-size:11.5px; }
+  #dropzone.has-file p.sub { color:var(--sel-tx); }
+
+  .field-row {
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    margin-top:14px; padding-top:14px; border-top:1px solid var(--line);
+    font-size:11.5px; color:var(--tx-2);
+  }
+  .field-row label { font-weight:500; color:var(--tx); }
+  .field-row .hint { display:block; font-weight:400; color:var(--tx-3); margin-top:1px; }
+  input.num, select.num {
+    width:60px; height:28px; padding:0 8px; border:1px solid var(--line-2); border-radius:var(--r);
+    background:#fff; color:var(--tx); font-family:var(--mono); font-size:11.5px;
+    text-align:right; font-variant-numeric:tabular-nums;
+  }
+  select.num { width:auto; padding-right:4px; text-align:left; cursor:pointer; }
+  input.num:focus, select.num:focus { outline:none; border-color:var(--sel); box-shadow:0 0 0 2px var(--sel-soft); }
+
+  /* ---------- Onglets ---------- */
+  .tabs { display:inline-flex; background:var(--hover); border-radius:5px; padding:2px; gap:2px; }
+  .tab-btn {
+    border:none; background:transparent; padding:4px 10px; font-size:11px; font-weight:500;
+    color:var(--tx-2); border-radius:3px; cursor:pointer; transition:background .14s ease, color .14s ease;
+  }
+  .tab-btn:hover { color:var(--tx); }
+  .tab-btn.active { background:#fff; color:var(--tx); box-shadow:0 1px 2px rgba(0,0,0,.10); }
+  .tab-panel { display:none; }
+  .tab-panel.active { display:block; }
+
+  #extraConfigDrop {
+    border:1.5px dashed var(--line-2); border-radius:var(--r); padding:18px 14px; text-align:center;
+    cursor:pointer; font-size:11.5px; color:var(--tx-3); background:var(--bg-2);
+    transition:border-color .14s ease, background .14s ease;
+  }
+  #extraConfigDrop:hover { border-color:#b4b4b4; }
+  #extraConfigDrop.drag { border-color:var(--sel); background:var(--sel-soft); }
+  #extraConfigDrop.has-file { border-style:solid; border-color:var(--sel); background:var(--sel-soft); color:var(--sel-tx); font-weight:600; }
+  #extraConfigText {
+    width:100%; min-height:132px; font-family:var(--mono); font-size:11px; line-height:1.65;
+    padding:10px 12px; border:1px solid var(--line-2); border-radius:var(--r); resize:vertical;
+    color:var(--tx); background:var(--bg-2);
+  }
+  #extraConfigText:focus { outline:none; background:#fff; border-color:var(--sel); box-shadow:0 0 0 2px var(--sel-soft); }
+  /* Hauteur réservée : le message de validation ne doit pas décaler le bouton. */
+  #extraConfigStatus { font-size:11px; margin-top:6px; min-height:16px; color:var(--tx-3); }
+  #extraConfigStatus.ok { color:var(--ok-tx); }
+  #extraConfigStatus.err { color:var(--bad-tx); }
+  #submitBtn { width:100%; height:34px; font-size:12.5px; }
+
+  /* ---------- Rail d'étapes (élément signature) ---------- */
+  .stages { list-style:none; margin:0; padding:0; }
+  .stage { display:grid; grid-template-columns:24px minmax(0,1fr); gap:12px; }
+  .stage-mark { position:relative; display:flex; justify-content:center; }
+  /* Le trait relie les noeuds ; il s'arrête au dernier. */
+  .stage:not(:last-child) .stage-mark::after {
+    content:""; position:absolute; top:20px; bottom:-4px; left:50%; width:1.5px;
+    transform:translateX(-50%); background:var(--line);
+  }
+  .stage.past:not(:last-child) .stage-mark::after { background:var(--ok); }
+  .stage-dot {
+    width:18px; height:18px; border-radius:50%; border:1.5px solid var(--line-2);
+    background:#fff; display:flex; align-items:center; justify-content:center;
+    font-family:var(--mono); font-size:9px; font-weight:600; color:var(--tx-3);
+    flex:none; position:relative; z-index:1;
+  }
+  .stage-body { padding-bottom:16px; min-width:0; }
+  .stage:last-child .stage-body { padding-bottom:0; }
+  .stage-name { font-size:12px; font-weight:500; color:var(--tx-3); }
+  .stage-note { font-size:11.5px; color:var(--tx-3); margin-top:1px; overflow-wrap:anywhere; }
+  .stage.past .stage-dot { background:var(--ok); border-color:var(--ok); color:#fff; }
+  .stage.past .stage-name { color:var(--tx-2); }
+  .stage.now .stage-dot { border-color:var(--sel); color:var(--sel); box-shadow:0 0 0 4px var(--sel-soft); }
+  .stage.now .stage-name { color:var(--tx); font-weight:600; }
+  .stage.now .stage-note { color:var(--tx-2); }
+  .stage.now .stage-dot::before {
+    content:""; position:absolute; inset:-1.5px; border-radius:50%;
+    border:1.5px solid var(--sel); animation:ring 1.8s ease-out infinite;
+  }
+  @keyframes ring { 0% { transform:scale(1); opacity:.9; } 70%,100% { transform:scale(1.9); opacity:0; } }
+
+  /* ---------- Consoles ---------- */
+  .console-head {
+    display:flex; align-items:center; gap:7px; padding:0 0 7px; flex:none;
+    font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.07em; color:var(--tx-2);
+  }
+  .console-head svg { width:13px; height:13px; }
+  .console {
+    background:#fff; border:1px solid var(--line); border-radius:var(--r-lg); color:#3c3c3c;
+    font-family:var(--mono); font-size:11px; line-height:1.7; padding:12px 14px;
+    overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; margin:0;
+    box-shadow:0 1px 2px rgba(0,0,0,.05);
+  }
+  .console:empty::after { content:"En attente de la première étape..."; color:var(--tx-3); }
+  .stream-live { color:var(--sel-tx); text-transform:none; letter-spacing:0; font-weight:500; font-size:11.5px; }
+
+  /* Écran de suivi : tout tient dans la hauteur, chaque panneau défile chez lui. */
+  .run-grid {
+    display:grid; grid-template-columns:minmax(300px,400px) minmax(0,1fr);
+    gap:20px; flex:1; min-height:0;
+  }
+  .run-col { display:flex; flex-direction:column; gap:16px; min-height:0; }
+  .run-col .sheet { max-width:none; overflow-y:auto; }
+  .console-block { display:flex; flex-direction:column; min-height:0; flex:1; }
+  .console-block .console { flex:1; min-height:0; }
+  @media (max-width:1000px) { .run-grid { grid-template-columns:minmax(0,1fr); } }
+
+  /* ---------- Viewport pan/zoom ---------- */
+  .viewport {
+    position:relative; overflow:hidden; background:var(--canvas); min-width:0;
+    background-image:radial-gradient(var(--canvas-dot) 1px, transparent 1px);
+    background-size:16px 16px; touch-action:none; cursor:grab;
+    overscroll-behavior:contain;
+  }
+  .viewport.panning { cursor:grabbing; }
+  body.space .viewport { cursor:grab; }
+  body.space .viewport.panning { cursor:grabbing; }
+  .world { position:absolute; top:0; left:0; transform-origin:0 0; will-change:transform; }
+  .board {
+    position:absolute; top:0; background:#fff; box-shadow:var(--shadow-sheet);
+  }
+  .board > iframe, .board > img, .board > embed { display:block; border:none; width:100%; height:100%; }
+  /* Coupure entre deux pages. Le rendu et la cible empilent leurs pages avec
+     24px de blanc, invisible sur du papier blanc : on repeint cette bande à
+     la couleur du canevas et on y projette l'ombre des deux feuilles, pour
+     qu'une fin de page se lise d'un coup d'oeil. Purement visuel -- ni le
+     rendu ni le diff ne sont touchés. */
+  .page-gap {
+    position:absolute; left:0; right:0; z-index:2; pointer-events:none;
+    background:var(--canvas);
+    box-shadow:inset 0 7px 8px -8px rgba(0,0,0,.38), inset 0 -7px 8px -8px rgba(0,0,0,.38);
+  }
+  /* Trait net sur l'arête de chaque feuille, d'épaisseur constante à l'écran
+     quel que soit le zoom (--inv-z est posé par le contrôleur de zoom). La
+     bande porte la coupure de près, ces traits la portent de loin. */
+  .page-gap::before, .page-gap::after {
+    content:""; position:absolute; left:0; right:0;
+    height:calc(1px * var(--inv-z, 1)); background:rgba(0,0,0,.42);
+  }
+  .page-gap::before { top:0; }
+  .page-gap::after { bottom:0; }
+  /* Le nom de frame garde une taille d'écran constante quel que soit le zoom. */
+  .frame-name {
+    position:absolute; left:0; bottom:100%; margin-bottom:7px; white-space:nowrap;
+    display:flex; align-items:center; gap:8px; transform-origin:0 100%;
+    font-size:11px; font-weight:500; color:var(--tx-2); letter-spacing:-0.004em; pointer-events:none;
+  }
+  .frame-name .fn-sub { color:var(--tx-3); font-weight:400; }
+  /* Capte le survol et le glisser au-dessus des cadres, pour que la molette et
+     le déplacement marchent partout -- sauf en mode édition, où la souris doit
+     atteindre les éléments de la preview. */
+  .board-shield { position:absolute; inset:0; z-index:2; }
+  body.tool-edit .board-shield { pointer-events:none; }
+  body.tool-edit.space .board-shield { pointer-events:auto; }
+  body.tool-edit #targetPane .board-shield { pointer-events:auto; }
+  body.tool-edit .viewport { cursor:default; }
+  body.tool-edit.space .viewport { cursor:grab; }
+  body.tool-edit.space .viewport.panning { cursor:grabbing; }
+  #previewPane.editing { box-shadow:var(--shadow-sheet), 0 0 0 1.5px var(--sel); }
+  #previewPane.editing .frame-name { color:var(--sel); font-weight:600; }
+  body.tool-edit #targetPane { opacity:.45; }
+
+  /* Pastille de zoom : flotte au-dessus du plan de travail, comme les contrôles
+     de vue d'un éditeur. */
+  /* Barre d'outils flottante : elle porte le mode de travail et le cadrage,
+     les deux choses qu'on change sans arrêt en comparant deux rendus. */
+  .dock {
+    position:absolute; bottom:16px; left:50%; transform:translateX(-50%);
+    display:flex; align-items:center; gap:2px; padding:3px;
+    background:#fff; border:1px solid var(--line); border-radius:9px;
+    box-shadow:var(--shadow-pop); z-index:10; user-select:none; max-width:calc(100% - 32px);
+  }
+  .dock button {
+    height:28px; min-width:28px; padding:0 7px; border:none; background:transparent;
+    color:var(--tx-2); border-radius:6px; cursor:pointer; font-size:11px; font-weight:500;
+    display:inline-flex; align-items:center; justify-content:center; gap:5px;
+    transition:background .14s ease, color .14s ease;
+  }
+  .dock button:hover:not(:disabled) { background:var(--hover); color:var(--tx); }
+  .dock button[aria-pressed="true"] { background:var(--sel); color:#fff; }
+  .dock button[aria-pressed="true"]:hover { background:#0b86e0; color:#fff; }
+  .dock button:disabled { color:#c2c2c2; cursor:not-allowed; }
+  /* Un outil pas encore livré se signale, plutôt que de rester un bouton mort
+     dont on ne sait pas s'il est cassé. */
+  .dock button.soon { position:relative; }
+  .dock button.soon::after {
+    content:""; position:absolute; top:4px; right:4px; width:4px; height:4px;
+    border-radius:50%; background:var(--warn);
+  }
+  .dock .zval {
+    min-width:50px; font-family:var(--mono); font-size:11px; color:var(--tx);
+    font-variant-numeric:tabular-nums;
+  }
+  .dock .zsep { width:1px; height:18px; background:var(--line); margin:0 4px; flex:none; }
+  .zoomhint {
+    position:absolute; bottom:60px; left:50%; transform:translateX(-50%);
+    z-index:10; pointer-events:none; white-space:nowrap;
+    font-size:10.5px; color:var(--tx-3); line-height:1.7;
+    transition:opacity .45s ease;
+  }
+  body.hint-gone .zoomhint { opacity:0; }
+  .zoomhint kbd {
+    background:#fff; border:1px solid var(--line-2); border-bottom-width:2px; border-radius:3px;
+    padding:1px 4px; font-size:9.5px; font-family:var(--mono); color:var(--tx-2);
+  }
+
+  .empty { padding:16px; font-size:11.5px; color:var(--tx-3); }
+  .error-sheet { border-left:3px solid var(--bad); }
+  .error-msg {
+    font-family:var(--mono); font-size:11.5px; line-height:1.7; color:#8a2415;
+    background:#fdf2f0; border-radius:var(--r); padding:12px 14px; margin:0;
+    white-space:pre-wrap; overflow-wrap:anywhere;
+  }
+
+  /* ---------- Panneau d'inspection ---------- */
+  #editSidebar {
+    background:var(--bg); border-left:1px solid var(--line); overflow-y:auto;
+    padding:14px 12px 16px; display:none; flex-direction:column; gap:14px; min-width:0;
+  }
+  #editSidebar.open { display:flex; }
+  #editSidebar h3 { margin:0; font-size:12px; font-weight:600; }
+  #editSidebar .sb-label {
+    font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.07em;
+    color:var(--tx-3); margin:0 0 6px;
+  }
+  #editSidebar .sb-box { background:var(--bg-2); border:1px solid var(--line); border-radius:var(--r); padding:8px 10px; }
+  #editSidebar .sb-row {
+    display:flex; justify-content:space-between; align-items:center; gap:8px;
+    font-size:11px; color:var(--tx); line-height:2; font-variant-numeric:tabular-nums;
+  }
+  #editSidebar .sb-row.scrubbable span:first-child { cursor:ew-resize; user-select:none; }
+  #editSidebar .sb-row.scrubbable:hover span:first-child { color:var(--sel); }
+  body.scrubbing, body.scrubbing * { cursor:ew-resize !important; user-select:none !important; }
+  #editSidebar .sb-row span:first-child { color:var(--tx-3); }
+  #editSidebar kbd, .sb-keys kbd {
+    background:var(--hover); border:1px solid var(--line-2); border-bottom-width:2px;
+    border-radius:3px; padding:1px 5px; font-size:10px; font-family:var(--mono); color:var(--tx-2);
+  }
+  #editSidebar .sb-keys { font-size:11px; color:var(--tx-3); line-height:2.1; }
+  #editSidebar .sb-actions { margin-top:auto; display:flex; flex-direction:column; gap:7px; }
+  #editSidebar .sb-btn {
+    width:100%; height:28px; border-radius:var(--r); font-size:11.5px; font-weight:500;
+    cursor:pointer; border:1px solid var(--line-2); background:#fff; color:var(--tx);
+    transition:background .14s ease, color .14s ease;
+  }
+  #editSidebar .sb-btn:hover { background:var(--hover); }
+  #editSidebar .sb-btn.primary { background:var(--sel); color:#fff; border-color:var(--sel); }
+  #editSidebar .sb-btn.primary:hover { background:#0b86e0; }
+  #editSidebar .sb-btn.primary:disabled { background:#e9e9e9; color:#a3a3a3; border-color:#e9e9e9; cursor:not-allowed; }
+  #editSidebar .sb-status { font-size:10.5px; color:var(--tx-3); text-align:center; min-height:15px; }
+  #editSidebar .mode-btn { flex:1; height:24px; font-size:10.5px; }
+  #editSidebar .mode-btn.active { background:var(--sel-soft); color:var(--sel-tx); border-color:var(--sel); }
+  #editSidebar .pad-in {
+    width:66px; height:22px; padding:0 6px; border:1px solid var(--line-2); border-radius:3px;
+    background:#fff; color:var(--tx); font-family:var(--mono); font-size:10.5px;
+    text-align:right; font-variant-numeric:tabular-nums;
+  }
+  #editSidebar .pad-in:focus { outline:none; border-color:var(--sel); }
+  #editSidebar input[type=range] { width:100%; accent-color:var(--sel); margin:6px 0 0; }
+  #editSidebar input[type=checkbox] { accent-color:var(--sel); width:13px; height:13px; cursor:pointer; }
+
+  @media (max-width:900px) {
+    .workbench, body.editing-open .workbench { grid-template-columns:minmax(0,1fr); }
+    .rail { display:none; }
+  }
+  @media (prefers-reduced-motion:reduce) {
+    *, *::before, *::after { animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; }
+  }
+
+/* body est une grille a 2 lignes (40px toolbar + reste) qui attend le
+   header et .workbench comme enfants DIRECTS. #root s'interpose entre les
+   deux : display:contents l'efface de la mise en page sans toucher au JSX,
+   pour que ses enfants redeviennent les vrais items de la grille. */
+#root { display: contents; }

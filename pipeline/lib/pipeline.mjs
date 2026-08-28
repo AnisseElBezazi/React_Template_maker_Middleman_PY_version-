@@ -12,11 +12,11 @@ import { spawnSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { generateSampleCvData } from "../generate_sample_from_extra_config.mjs";
-import { generateDiffImage } from "../diff_image.mjs";
-import { addGridOverlay } from "../grid_overlay.mjs";
-import { auditJsx } from "../audit_jsx.mjs";
-import { addTextSafety } from "../add_text_safety.mjs";
+import { generateSampleCvData } from "../src/jsx/generate_sample_from_extra_config.mjs";
+import { generateDiffImage } from "../src/rendering/diff_image.mjs";
+import { addGridOverlay } from "../src/rendering/grid_overlay.mjs";
+import { auditJsx } from "../src/jsx/audit_jsx.mjs";
+import { addTextSafety } from "../src/jsx/add_text_safety.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PIPELINE_ROOT = path.resolve(__dirname, "..");
@@ -132,7 +132,7 @@ function cropExtraImages(rawResponseText, targetPaths, outDir, pythonBin) {
     const sourcePath = fs.existsSync(bgPath) ? bgPath : targetPath;
     const outPath = path.join(outDir, `extracted-${index}.png`);
     const result = spawnSync(pythonBin, [
-      path.join(PIPELINE_ROOT, "crop_image.py"), sourcePath, String(x), String(y), String(w), String(h), outPath,
+      path.join(PIPELINE_ROOT, "src", "extraction", "crop_image.py"), sourcePath, String(x), String(y), String(w), String(h), outPath,
       // Source de repli, utilisée UNIQUEMENT si la découpe ressort blanche :
       // certaines icônes du PDF sont des glyphes de texte (un ☎ dans une
       // police de symboles), absents du calque décor. Un aplat de couleur,
@@ -210,7 +210,7 @@ export async function runPipeline({
   const pythonBin = fs.existsSync(venvPython) ? venvPython : "python3";
   const extractResult = spawnSync(
     pythonBin,
-    [path.join(PIPELINE_ROOT, "extract.py"), pdfPath, outDir, allPages ? "all" : String(pageNumber)],
+    [path.join(PIPELINE_ROOT, "src", "extraction", "extract.py"), pdfPath, outDir, allPages ? "all" : String(pageNumber)],
     { encoding: "utf-8" }
   );
   if (extractResult.status !== 0)
@@ -244,7 +244,7 @@ export async function runPipeline({
     const bgPath = path.join(outDir, `background-layer-${i + 1}.png`);
     const bgResult = spawnSync(
       pythonBin,
-      [path.join(PIPELINE_ROOT, "extract_background.py"), dictionaryPath, bgPath, String(width), String(height), String(i + 1)],
+      [path.join(PIPELINE_ROOT, "src", "extraction", "extract_background.py"), dictionaryPath, bgPath, String(width), String(height), String(i + 1)],
       { encoding: "utf-8" }
     );
     return bgResult.status === 0 && fs.existsSync(bgPath) ? bgPath : null;
@@ -257,7 +257,7 @@ export async function runPipeline({
   // Dictionnaire compact (texte+taille+couleur, sans le HTML/CSS autour) --
   // même signal utile pour la passe 2, beaucoup moins de tokens que le HTML
   // brut (typiquement -99%, voir compact_dictionary.py).
-  const compactDictResult = spawnSync(pythonBin, [path.join(PIPELINE_ROOT, "compact_dictionary.py"), dictionaryPath], { encoding: "utf-8" });
+  const compactDictResult = spawnSync(pythonBin, [path.join(PIPELINE_ROOT, "src", "extraction", "compact_dictionary.py"), dictionaryPath], { encoding: "utf-8" });
   const dictionaryCompact = compactDictResult.status === 0 && compactDictResult.stdout.trim()
     ? compactDictResult.stdout
     : fs.readFileSync(dictionaryPath, "utf-8").slice(0, 40000); // repli si le compactage échoue
@@ -280,7 +280,7 @@ export async function runPipeline({
   const extractedImageBlocks = topImages.flatMap((img) => {
     const idx = extractedImages.indexOf(img) + 1;
     const small = path.join(visionDir, `extracted-${idx}.png`);
-    const shrunk = spawnSync(pythonBin, [path.join(PIPELINE_ROOT, "shrink_for_vision.py"), img.path, small], { encoding: "utf-8" });
+    const shrunk = spawnSync(pythonBin, [path.join(PIPELINE_ROOT, "src", "rendering", "shrink_for_vision.py"), img.path, small], { encoding: "utf-8" });
     const sendPath = shrunk.status === 0 && fs.existsSync(small) ? small : img.path;
     return [
       { type: "text", text: `Image extraite extracted-${idx} (dimensions réelles ${img.width}x${img.height}px) :` },
@@ -495,7 +495,7 @@ export async function runPipeline({
   function render(jsxPath, pngOutPath) {
     const result = spawnSync(
       "node",
-      [path.join(PIPELINE_ROOT, "render.mjs"), jsxPath, cvDataPath, pngOutPath, String(width), String(height)],
+      [path.join(PIPELINE_ROOT, "src", "rendering", "render.mjs"), jsxPath, cvDataPath, pngOutPath, String(width), String(height)],
       { encoding: "utf-8", cwd: PIPELINE_ROOT }
     );
     if (result.status !== 0)
@@ -700,14 +700,14 @@ export async function runPipeline({
   let finalPngPath = png3Path;
   let scaleNote = "aucune correction nécessaire";
   try {
-    const dictResult = spawnSync(pythonBin, [path.join(PIPELINE_ROOT, "measure_dictionary.py"), dictionaryPath], { encoding: "utf-8" });
+    const dictResult = spawnSync(pythonBin, [path.join(PIPELINE_ROOT, "src", "extraction", "measure_dictionary.py"), dictionaryPath], { encoding: "utf-8" });
     const dictSizes = dictResult.status === 0 ? JSON.parse(dictResult.stdout || "{}") : {};
     const headings = Object.keys(dictSizes);
 
     if (headings.length >= 2) {
       const domResult = spawnSync(
         "node",
-        [path.join(PIPELINE_ROOT, "measure_dom_sizes.mjs"), png3Path.replace(/\.png$/i, ".html"), JSON.stringify(headings), String(width), String(height)],
+        [path.join(PIPELINE_ROOT, "src", "rendering", "measure_dom_sizes.mjs"), png3Path.replace(/\.png$/i, ".html"), JSON.stringify(headings), String(width), String(height)],
         { encoding: "utf-8", cwd: PIPELINE_ROOT }
       );
       const domSizes = domResult.status === 0 ? JSON.parse(domResult.stdout || "{}") : {};
@@ -823,7 +823,7 @@ export async function runPipeline({
     }
 
     // --- Composant B : tailles de libellés statiques, regroupées par classe partagée ---
-    const dictResult2 = spawnSync(pythonBin, [path.join(PIPELINE_ROOT, "compact_dictionary.py"), dictionaryPath], { encoding: "utf-8" });
+    const dictResult2 = spawnSync(pythonBin, [path.join(PIPELINE_ROOT, "src", "extraction", "compact_dictionary.py"), dictionaryPath], { encoding: "utf-8" });
     const dictEntries = [];
     for (const line of (dictResult2.stdout || "").split("\n")) {
       const m = line.match(/^[\d.]+,[\d.]+\|([\d.]+)px\|[^|]*\|(.*)$/);
@@ -845,7 +845,7 @@ export async function runPipeline({
     const currentHtmlPath = finalPngPath.replace(/\.png$/i, ".html");
     const domResult2 = spawnSync(
       "node",
-      [path.join(PIPELINE_ROOT, "measure_dom_texts.mjs"), currentHtmlPath, String(width), String(height)],
+      [path.join(PIPELINE_ROOT, "src", "rendering", "measure_dom_texts.mjs"), currentHtmlPath, String(width), String(height)],
       { encoding: "utf-8", cwd: PIPELINE_ROOT }
     );
     const domTexts = domResult2.status === 0 ? JSON.parse(domResult2.stdout || "[]") : [];
