@@ -29,6 +29,17 @@ def register_run(run_id: str, state: dict[str, Any]) -> None:
     _runs[run_id] = state
 
 
+def request_cancel(run_id: str) -> bool:
+    """Marque un run en cours pour annulation. La pipeline le remarque a la
+    prochaine etape franchie (on_progress) ou au prochain chunk de reponse
+    en streaming -- pas instantane, mais sans jamais laisser un run bloque."""
+    state = _runs.get(run_id)
+    if not state or state.get("status") != "running":
+        return False
+    state["cancel_requested"] = True
+    return True
+
+
 def live_run(run_id: str) -> dict[str, Any] | None:
     return _runs.get(run_id)
 
