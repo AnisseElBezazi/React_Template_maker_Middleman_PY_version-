@@ -51,6 +51,14 @@ async def create_run(
     return {"run_id": run_id}
 
 
+def cancel_run(run_id: str):
+    """Marche pour un run PDF comme pour un run Jinja : les deux partagent le
+    meme registre de runs en memoire (register_run)."""
+    if not runs_service.request_cancel(run_id):
+        raise HTTPException(status_code=409, detail="Run introuvable ou déjà terminé.")
+    return {"ok": True}
+
+
 def get_run(run_id: str):
     state = runs_service.get_run(run_id)
     if not state:
