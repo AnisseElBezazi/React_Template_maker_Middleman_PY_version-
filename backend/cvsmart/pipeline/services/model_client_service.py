@@ -4,6 +4,8 @@ from typing import Callable
 import anthropic
 import openai
 
+from cvsmart.shared.errors import RunCancelled
+
 # Kimi K3 (Moonshot) expose une API compatible OpenAI : on bascule de client
 # selon le modele choisi, sans toucher au reste de la pipeline.
 # Kimi K3 est accessible chez plusieurs fournisseurs, avec des identifiants
@@ -49,6 +51,7 @@ class ModelClient:
     api_key: str
     on_progress: Callable[[str, str], None] = lambda step, message: None
     on_stream: Callable[[str, str, str], None] = lambda step, kind, text: None
+    should_cancel: Callable[[], bool] = lambda: False
 
     total_input_tokens: int = field(default=0, init=False)
     total_output_tokens: int = field(default=0, init=False)
@@ -102,6 +105,9 @@ class ModelClient:
         usage = None
         finish_reason = None
         for chunk in stream:
+            if self.should_cancel():
+                stream.close()
+                raise RunCancelled()
             if chunk.usage:
                 usage = chunk.usage
             if chunk.choices and chunk.choices[0].finish_reason:
@@ -168,6 +174,8 @@ class ModelClient:
             messages=[{"role": "user", "content": content}],
         ) as stream:
             for event in stream:
+                if self.should_cancel():
+                    raise RunCancelled()
                 if event.type != "content_block_delta":
                     continue
                 if event.delta.type == "thinking_delta":
