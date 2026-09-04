@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 
 from cvsmart.shared.paths_service import OUT_ROOT, to_public_url
+from cvsmart.shared.errors import RunCancelled
 from cvsmart.runs.services.runs_service import register_run, live_run, PASS_LABELS
 from cvsmart.rendering.services.target_service import stacked_target, target_pages, png_size, PAGE_GAP
 from cvsmart.pipeline.services.pipeline_service import run_pipeline
@@ -45,6 +46,9 @@ def start_run(pdf_path: Path, page: str, effort: str, extra_config_path: Path | 
 
     def on_stream(step, kind, text):
         state["stream"] = {"step": step, "kind": kind, "text": text}
+
+    def should_cancel():
+        return state.get("cancel_requested", False)
 
     api_key = _api_key()
 
@@ -114,6 +118,10 @@ def start_run(pdf_path: Path, page: str, effort: str, extra_config_path: Path | 
                     "total_cache_read_tokens": result.total_cache_read_tokens,
                 },
             })
+        except RunCancelled:
+            state["status"] = "cancelled"
+            state["step"] = "cancelled"
+            state["message"] = "Annulé."
         except Exception as err:
             state["status"] = "error"
             state["step"] = "error"
