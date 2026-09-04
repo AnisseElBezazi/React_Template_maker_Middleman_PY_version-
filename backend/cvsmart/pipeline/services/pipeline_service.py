@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from cvsmart.shared.paths_service import NODE_TOOLS_ROOT, PIPELINE_SAMPLE_CVDATA
+from cvsmart.shared.errors import RunCancelled
 from cvsmart.jsx.services.sample_data_service import generate_sample_cv_data
 from cvsmart.jsx.services.audit_service import audit_jsx
 from cvsmart.jsx.services.text_safety_service import add_text_safety
@@ -75,6 +76,16 @@ def run_pipeline(
         raise FileNotFoundError(f"PDF introuvable: {pdf_path}")
     if not api_key:
         raise RuntimeError("Clé API manquante.")
+
+    # Chaque etape de la pipeline annonce sa progression via on_progress --
+    # on verifie l'annulation ici une seule fois plutot que devant chacun
+    # des ~15 appels, pour que "Annuler" reagisse partout sans y toucher.
+    _inner_on_progress = on_progress
+
+    def on_progress(step: str, message: str) -> None:
+        if should_cancel():
+            raise RunCancelled("Run annulé par l'utilisateur.")
+        _inner_on_progress(step, message)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     python_bin = sys.executable
@@ -187,7 +198,7 @@ def run_pipeline(
             block["cache_control"] = {"type": "ephemeral"}
         target_image_blocks.append(block)
 
-    client = ModelClient(api_key=api_key, on_progress=on_progress, on_stream=on_stream)
+    client = ModelClient(api_key=api_key, on_progress=on_progress, on_stream=on_stream, should_cancel=should_cancel)
 
     def render(jsx_path: Path, png_out_path: Path) -> list[Path]:
         result = render_component(jsx_path, cv_data_path, png_out_path, width, height)
