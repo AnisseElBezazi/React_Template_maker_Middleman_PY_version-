@@ -67,6 +67,21 @@ function ErrorView({ run }) {
   );
 }
 
+function CancelledView() {
+  return (
+    <main className="canvas"><div className="canvas-pad canvas-center">
+      <div className="sheet">
+        <div className="sheet-head">
+          <div>
+            <h2>Run annulé</h2>
+            <p>Arrêté avant la fin, à ta demande. Rien n'a été écrasé -- relance quand tu veux.</p>
+          </div>
+        </div>
+      </div>
+    </div></main>
+  );
+}
+
 function RunningSidebarInfo({ run, runId }) {
   const elapsed = useElapsed(runId);
   return (
@@ -223,6 +238,7 @@ export default function RunPage() {
     !run ? "Design-to-Code"
     : run.status === "running" ? "Run en cours"
     : run.status === "error" ? "Erreur"
+    : run.status === "cancelled" ? "Annulé"
     : run.type === "jinja" ? "Résultat Jinja"
     : "Résultat"
   );
@@ -282,9 +298,15 @@ export default function RunPage() {
         </aside>
         {run.status === "running" && <RunningView run={run} runId={runId} />}
         {run.status === "error" && <ErrorView run={run} />}
-        {run.status === "done" && isJinja && <JinjaDoneView result={run.result} />}
-        {run.status === "done" && !isJinja && <DoneView run={run} runId={runId} />}
+        {run.status === "cancelled" && <CancelledView />}
+        {run.status === "done" && isJinja && <JinjaDoneView result={run.result} effort={run.effort} runId={runId} />}
+        {run.status === "done" && !isJinja && (
+          <DoneView run={run} runId={runId} chatOpen={chatOpen} onToggleChat={() => setChatOpen((o) => !o)} />
+        )}
       </div>
+      {run.status === "done" && !isJinja && (
+        <ChatPanel runId={runId} open={chatOpen} onClose={() => setChatOpen(false)} />
+      )}
     </>
   );
 }

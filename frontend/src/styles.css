@@ -77,6 +77,7 @@
   .badge.running::before { animation:pulse 1.4s ease-in-out infinite; }
   .badge.done { color:var(--ok-tx); background:rgba(20,174,92,.12); }
   .badge.error { color:var(--bad-tx); background:rgba(242,72,34,.11); }
+  .badge.cancelled { color:var(--tx-3); background:var(--bg-2); }
   @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.25; } }
 
   /* ---------- Structure ---------- */
