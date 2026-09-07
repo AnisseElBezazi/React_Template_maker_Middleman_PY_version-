@@ -18,6 +18,7 @@ import { useEditor, isEditTool } from "../hooks/useEditor";
 import { useElapsed } from "../hooks/useElapsed";
 import { formatWhen } from "../hooks/formatWhen";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
+import { cancelRun } from "../api/runs_api";
 
 // Ecart entre les deux cadres dans le plan de travail, en pixels du document.
 const BOARD_GAP = 80;
@@ -215,6 +216,8 @@ export default function RunPage() {
   const { runId } = useParams();
   const { run, error } = useRun(runId);
   const runs = useRuns();
+  const [cancelling, setCancelling] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
 
   useDocumentTitle(
     !run ? "Design-to-Code"
@@ -227,9 +230,19 @@ export default function RunPage() {
   if (error) return <p className="error-msg">{error}</p>;
   if (!run) return <p>Chargement...</p>;
 
+  async function handleCancel() {
+    setCancelling(true);
+    try {
+      await cancelRun(runId);
+    } catch {
+      setCancelling(false);
+    }
+  }
+
   const status = {
     running: <span className="badge running">En cours</span>,
     error: <span className="badge error">Échec</span>,
+    cancelled: <span className="badge cancelled">Annulé</span>,
     done: <span className="badge done">Terminé</span>,
   }[run.status];
 
@@ -247,6 +260,10 @@ export default function RunPage() {
         <a className="btn primary" href={`/api/runs/${runId}/download`}><IconDownload /><span>Télécharger le .jsx</span></a>
       </>
     )
+  ) : run.status === "running" ? (
+    <button type="button" className="btn ghost" onClick={handleCancel} disabled={cancelling}>
+      <IconClose /><span>{cancelling ? "Annulation..." : "Annuler"}</span>
+    </button>
   ) : backBtn;
 
   return (
