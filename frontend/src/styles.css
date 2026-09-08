@@ -104,6 +104,13 @@
   }
   .runlist a:hover { background:var(--hover); text-decoration:none; }
   .runlist a[aria-current] { background:var(--sel-soft); }
+  .runlist .dot {
+    display:inline-block; width:6px; height:6px; border-radius:50%; margin-right:6px;
+    background:var(--tx-3); vertical-align:middle;
+  }
+  .runlist .dot.running { background:var(--warn-tx); animation:pulse 1.4s ease-in-out infinite; }
+  .runlist .dot.done { background:var(--ok-tx); }
+  .runlist .dot.error { background:var(--bad-tx); }
   .runlist .when { font-size:11.5px; font-weight:500; color:var(--tx); }
   .runlist .rid { display:block; font-family:var(--mono); font-size:10px; color:var(--tx-3); overflow-wrap:anywhere; margin-top:1px; }
   .runlist .tag { font-size:9.5px; font-weight:600; color:var(--ok-tx); letter-spacing:.04em; text-transform:uppercase; margin-left:6px; }

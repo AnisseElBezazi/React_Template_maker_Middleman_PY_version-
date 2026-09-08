@@ -17,9 +17,10 @@ export default function RunsRail({ runs, currentId = null }) {
           {shown.map((run, i) => (
             <li key={run.run_id}>
               <a href={`/runs/${run.run_id}`} aria-current={run.run_id === currentId ? "page" : undefined}>
+                <span className={`dot ${run.status}`} title={run.status} />
                 <span className="when">{formatWhen(run.started_at)}</span>
                 {i === 0 && <span className="tag">dernier</span>}
-                <span className="rid">{run.run_id}</span>
+                <span className="rid">{run.label || run.run_id}</span>
               </a>
             </li>
           ))}
