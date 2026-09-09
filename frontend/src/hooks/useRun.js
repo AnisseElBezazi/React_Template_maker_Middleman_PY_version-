@@ -19,8 +19,15 @@ export function useRun(runId) {
       try {
         const status = await fetchRunStatus(runId);
         if (stopped) return;
-        setRun((prev) => (prev ? { ...prev, ...status } : prev));
         if (status.status === "running") {
+          // Fusion legere : "result" n'existe pas dans cette reponse (voir
+          // get_run_status), donc merger un statut terminal ("done"/"error")
+          // ici laisserait "run.status" passer a "done" avant que
+          // "run.result" n'existe -- DoneView plante alors sur `r.width`
+          // (r === null), page blanche jusqu'au refresh manuel. On ne merge
+          // donc QUE tant que ca tourne, et on bascule direct sur l'etat
+          // complet des que ce n'est plus le cas.
+          setRun((prev) => (prev ? { ...prev, ...status } : prev));
           timer = setTimeout(poll, POLL_MS);
         } else {
           const full = await fetchRun(runId);
