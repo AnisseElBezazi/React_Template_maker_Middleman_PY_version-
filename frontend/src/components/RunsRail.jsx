@@ -4,7 +4,7 @@ import { IconLayers } from "./Icons";
 import { formatWhen } from "../hooks/formatWhen";
 
 export default function RunsRail({ runs, currentId = null }) {
-  const shown = runs.slice(0, currentId ? 6 : 14);
+  const shown = runs;
   return (
     <div className="rail-group">
       <p className="rail-title"><IconLayers /> Runs</p>
