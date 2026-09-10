@@ -20,6 +20,27 @@ def _save_upload(upload: UploadFile, suffix: str) -> Path:
     return dest
 
 
+def _ensure_valid_pdf(path: Path):
+    """Le champ d'upload de l'éditeur visuel n'accepte QUE des PDF cote front
+    (accept="application/pdf"), mais un glisser-déposer ou un selecteur
+    systeme peut laisser passer un autre format malgre tout. Confirme sur
+    un cas reel : un .docx envoye ici a ete sauvegarde tel quel sous
+    l'extension .pdf par _save_upload (qui ne verifie jamais le contenu),
+    puis a fait planter pdfinfo bien plus loin dans extract.py avec un
+    message incomprehensible ("Impossible de lire le nombre de pages du
+    PDF"), sans aucune indication que le fichier envoye n'etait pas un PDF.
+    Verifie la signature PDF ("%PDF-") des l'upload pour echouer tout de
+    suite avec un message clair au lieu de laisser l'erreur remonter,
+    cryptique, depuis le pipeline."""
+    header = path.read_bytes()[:1024]
+    if b"%PDF-" not in header:
+        path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400,
+            detail="Le fichier envoyé n'est pas un PDF valide (vérifie que tu as bien sélectionné un .pdf, pas un .docx ou un autre format).",
+        )
+
+
 async def create_run(
     pdf: UploadFile = File(...),
     page: str = Form("all"),
