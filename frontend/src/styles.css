@@ -32,7 +32,8 @@
     background:var(--bg); border-bottom:1px solid var(--line); min-width:0; z-index:20;
   }
   .toolbar .logo { flex:none; display:block; }
-  .brand { display:flex; align-items:center; gap:8px; flex:none; }
+  .brand { display:flex; align-items:center; gap:8px; flex:none; color:inherit; }
+  .brand:hover b { color:var(--sel-tx); }
   .brand b { font-size:12px; font-weight:600; letter-spacing:-0.012em; }
   .tb-sep { width:1px; height:18px; background:var(--line); flex:none; }
   .crumb { display:flex; align-items:center; gap:8px; min-width:0; color:var(--tx-3); font-size:11.5px; }
