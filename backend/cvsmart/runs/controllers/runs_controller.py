@@ -47,6 +47,7 @@ async def create_run(
     effort: str = Form("high"),
     extra_config: UploadFile | None = File(None),
     extra_config_text: str | None = Form(None),
+    has_cover_page: str = Form("false"),
 ):
     pdf_path = _save_upload(pdf, ".pdf")
     pdf_url = "/uploads/" + pdf_path.name
@@ -68,7 +69,9 @@ async def create_run(
     page_value = "all" if rawpage == "all" else str(int(rawpage)) if rawpage.isdigit() else "all"
     effort_value = effort if effort in ("low", "high", "max") else "high"
 
-    run_id = start_run(pdf_path, page_value, effort_value, extra_config_path, pdf_url)
+    source_name = runs_service.clean_source_name(pdf.filename)
+    has_cover_page_value = (has_cover_page or "false").strip().lower() in ("true", "1", "on", "yes")
+    run_id = start_run(pdf_path, page_value, effort_value, extra_config_path, pdf_url, source_name, has_cover_page_value)
     return {"run_id": run_id}
 
 

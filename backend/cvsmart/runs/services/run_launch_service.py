@@ -27,15 +27,17 @@ def _api_key() -> str | None:
     return os.environ.get("MOONSHOT_API_KEY") if IS_MOONSHOT else os.environ.get("ANTHROPIC_API_KEY")
 
 
-def start_run(pdf_path: Path, page: str, effort: str, extra_config_path: Path | None, pdf_url: str) -> str:
+def start_run(pdf_path: Path, page: str, effort: str, extra_config_path: Path | None, pdf_url: str,
+              source_name: str | None = None, has_cover_page: bool = False) -> str:
     run_id = f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:5]}"
     out_dir = OUT_ROOT / run_id
 
     state = {
-        "run_id": run_id, "status": "running", "step": "extract", "message": "Demarrage...",
+        "run_id": run_id, "type": "jsx", "status": "running", "step": "extract", "message": "Demarrage...",
         "log": [], "stream": {"step": None, "kind": None, "text": ""},
         "result": None, "error": None, "pdf_url": pdf_url, "target_url": None,
-        "page": page, "effort": effort,
+        "page": page, "effort": effort, "cancel_requested": False, "source_name": source_name,
+        "has_cover_page": has_cover_page,
     }
     register_run(run_id, state)
 
@@ -59,6 +61,7 @@ def start_run(pdf_path: Path, page: str, effort: str, extra_config_path: Path | 
             result = run_pipeline(
                 pdf_path=pdf_path, out_dir=out_dir, api_key=api_key, page_number=page, pass1_effort=effort,
                 extra_config_path=extra_config_path, on_progress=on_progress, on_stream=on_stream,
+                should_cancel=should_cancel, has_cover_page=has_cover_page,
             )
             passes = [{
                 "name": p["name"], "label": p["label"],
@@ -94,7 +97,8 @@ def start_run(pdf_path: Path, page: str, effort: str, extra_config_path: Path | 
                 "cacheReadTokens": p.cache_read_tokens, "cacheWriteTokens": p.cache_write_tokens, "costUsd": p.cost_usd,
             } for p in result.per_pass_usage]
             (out_dir / "run-meta.json").write_text(json.dumps({
-                "pdfUrl": pdf_url, "page": page, "effort": effort, "width": result.width, "height": result.height,
+                "pdfUrl": pdf_url, "sourceName": source_name, "page": page, "effort": effort,
+                "width": result.width, "height": result.height,
                 "finishedAt": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
                 "tokens": {
                     "totalInputTokens": result.total_input_tokens, "totalOutputTokens": result.total_output_tokens,
