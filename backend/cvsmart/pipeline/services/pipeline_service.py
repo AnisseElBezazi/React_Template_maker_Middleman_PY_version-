@@ -67,8 +67,15 @@ def run_pipeline(
     pass1_effort: str = "high",
     cv_data_path: Path | None = None,
     extra_config_path: Path | None = None,
+    # Coche manuelle cote UI : le test de detection automatique de la page de
+    # couverture (voir pass1.md) se trompe parfois (page 1 avec de vrais
+    # blocs de contenu en plus de l'identite). Plutot que de dependre a 100%
+    # du modele, l'utilisateur peut trancher lui-meme quand il sait deja --
+    # ca court-circuite le test au lieu de le renforcer indefiniment.
+    has_cover_page: bool = False,
     on_progress: Callable[[str, str], None] = _noop_progress,
     on_stream: Callable[[str, str, str], None] = _noop_stream,
+    should_cancel: Callable[[], bool] = lambda: False,
 ) -> PipelineResult:
     pdf_path = Path(pdf_path)
     out_dir = Path(out_dir)
@@ -218,9 +225,22 @@ def run_pipeline(
             f"Ce ne sont PAS {page_count} variantes de la même page ni {page_count} templates différents : c'est UN SEUL document, à rendre par UN SEUL composant.",
             f"Attention à ne pas confondre deux choses : le NOMBRE de pages du document final n'est pas figé -- c'est le moteur de pagination qui en émet autant que les vraies données l'exigent, et il peut donc y en avoir plus ou moins que {page_count}.",
             f"Ce que les images cibles te montrent, c'est l'HABILLAGE de chaque page (en-tête, pied de page, bandeaux, filigranes, marges) et l'ORDRE des sections. Si les pages 2 et suivantes partagent le même habillage, écris-le UNE fois et laisse le moteur le répéter ; ne code jamais \"{page_count} pages\" en dur.",
-            "Si une page a un habillage à part (page de couverture, dernière page), reproduis-le comme tel.",
+            "Si une page a un habillage à part (page de couverture, dernière page), reproduis-le comme tel -- une page de couverture (identité/accroche seule, ou résumé tronqué) doit être un bloc JSX séparé à hauteur fixe, JAMAIS un item envoyé au moteur de pagination (voir la règle dédiée plus bas) : sinon le moteur remplit l'espace restant de cette page avec le contenu suivant (expériences...).",
             f'Pour une découpe EXTRA_IMAGES, ajoute le champ "page" (1-{page_count}) indiquant de quelle page viennent les coordonnées : EXTRA_IMAGES:[{{"index": 10, "page": 2, "x": 1050, "y": 15, "width": 90, "height": 70}}]. Sans ce champ, la découpe est faite sur la page 1.',
         ])
+        if has_cover_page:
+            # L'utilisateur a coche la case "page de couverture" cote UI : il
+            # a deja regarde le PDF, pas besoin de faire deviner au modele ce
+            # qu'il sait deja -- le test de detection automatique (voir
+            # pass1.md) se trompe parfois quand la page 1 affiche aussi de
+            # vrais blocs de contenu en plus de l'identite.
+            page_scope_text += "\n" + (
+                "CONFIRMATION EXPLICITE DE L'UTILISATEUR : la PAGE 1 de ce template EST une page à part "
+                "(habillage différent des pages suivantes) -- ne cherche PAS à le déterminer toi-même via le "
+                "test de détection, c'est déjà tranché. Applique DIRECTEMENT la RÈGLE MÉCANIQUE dédiée plus bas : "
+                "la page 1 doit être un bloc JSX séparé à hauteur fixe, rendu AVANT et EN DEHORS de tout appel à "
+                "`PaginatedEntryPages`, jamais comme item de son flux -- quel que soit le contenu qu'elle affiche."
+            )
     else:
         page_scope_text = "PÉRIMÈTRE : une seule page t'est fournie, tu ne reproduis que celle-là."
 
