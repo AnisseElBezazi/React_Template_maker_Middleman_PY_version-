@@ -13,6 +13,7 @@ export default function HomePage() {
   const [pdf, setPdf] = useState(null);
   const [page, setPage] = useState("all");
   const [effort, setEffort] = useState("high");
+  const [hasCoverPage, setHasCoverPage] = useState(false);
   const [pdfDrag, setPdfDrag] = useState(false);
 
   const [ecTab, setEcTab] = useState("file");
@@ -54,7 +55,7 @@ export default function HomePage() {
     setError(null);
     try {
       const { run_id } = await createRun({
-        pdf, page, effort,
+        pdf, page, effort, hasCoverPage,
         extraConfigFile: ecTab === "file" ? ecFile : null,
         extraConfigText: ecTab === "paste" ? trimmed : null,
       });
@@ -122,6 +123,14 @@ export default function HomePage() {
                   <option value="high">high — par défaut</option>
                   <option value="max">max — template complexe</option>
                 </select>
+              </div>
+
+              <div className="field-row">
+                <label htmlFor="coverPageInput">Page de couverture
+                  <span className="hint">Coche si la page 1 a un habillage à part (fond/logo différent) des pages suivantes — évite au modèle de se tromper quand il doit le deviner lui-même.</span>
+                </label>
+                <input type="checkbox" id="coverPageInput" checked={hasCoverPage}
+                  onChange={(e) => setHasCoverPage(e.target.checked)} />
               </div>
             </div>
 
