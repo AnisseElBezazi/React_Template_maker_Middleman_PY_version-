@@ -1,11 +1,13 @@
 import base64
 import html
+import io
 import re
 import statistics
 import subprocess
 import tempfile
 from pathlib import Path
 
+import pikepdf
 from PIL import Image
 
 INVISIBLE_TEXT_DPI = 150
@@ -342,6 +344,42 @@ def render_page(html_text, id_counter, page_image):
             blocks_html.append(render_block(block_lines, id_counter[0]))
 
     return width, height, "".join(blocks_html)
+
+
+TEXT_SHOW_OPERATORS = {"Tj", "TJ", "'", '"'}
+
+
+def strip_pdf_text(pdf_bytes):
+    """Retire tout texte reellement dessine (operateurs Tj/TJ/'/") du flux de
+    contenu d'un PDF, en gardant tout le reste (formes, images, degrades)
+    intact -- pour generer le calque decor du fond de page SANS dependre du
+    mode "sans texte" de `pdftohtml -c`, qui traite TOUT texte a l'identique
+    (y compris une icone dessinee via une police de symboles, ex: un chevron
+    de watermark) sans distinguer texte lisible et glyphe decoratif.
+
+    Confirme sur un cas reel : le calque `-c` d'un template avait perdu son
+    watermark (rendu via une police-icone) exactement comme le texte normal
+    -- et le repli de secours de `crop_image.py` (qui redecoupe alors la
+    capture BRUTE, texte compris, quand le calque ressort vide a cet
+    endroit) a fini par recuperer un fragment de balise Jinja cassee a la
+    place du watermark. Un fond genere depuis CE PDF (sans le moindre texte)
+    ne peut plus jamais laisser fuir un fragment de texte de cette facon --
+    et une IA qui voit un fond complet dès le depart n'a plus besoin
+    d'essayer de decouper cette zone du tout.
+
+    Les traits de soulignement de texte sont des primitives graphiques
+    (rectangles remplis) totalement separees des operateurs de texte cote
+    LibreOffice -- ils survivent donc a ce retrait et peuvent laisser des
+    segments de trait orphelins dans le resultat. C'est un residu cosmetique
+    mineur (aucun texte lisible), pas traite ici."""
+    with pikepdf.open(io.BytesIO(pdf_bytes)) as pdf:
+        for page in pdf.pages:
+            instructions = pikepdf.parse_content_stream(page)
+            kept = [instr for instr in instructions if str(instr.operator) not in TEXT_SHOW_OPERATORS]
+            page.Contents = pdf.make_stream(pikepdf.unparse_content_stream(kept))
+        buffer = io.BytesIO()
+        pdf.save(buffer)
+        return buffer.getvalue()
 
 
 def pdf_to_html(pdf_bytes, first_page=None, last_page=None, zoom=None):
