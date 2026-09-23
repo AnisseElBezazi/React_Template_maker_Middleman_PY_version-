@@ -34,3 +34,85 @@ Le résultat est un composant `<Nom>TemplateHtml({ cvData, assets })` qui réuti
 - **Annulation** : un run peut être arrêté à tout moment, y compris en plein appel au modèle.
 - **Export** : archive zip avec le composant, le CSS Tailwind compilé et scopé, et les images.
 
+## Comment ça marche
+
+```mermaid
+flowchart LR
+    A[PDF / DOCX] -->|LibreOffice si DOCX| B[PDF cible]
+    B --> C[Extraction<br/>images, dictionnaire de style,<br/>calque décor sans texte]
+    C --> D[Passe 1<br/>génération du JSX]
+    D --> E[Passe 2<br/>comparaison avec la cible<br/>et auto-correction]
+    E --> F[Passe 3<br/>audit de câblage]
+    F --> G[Correction d'échelle<br/>et de tailles]
+    G --> H[Rendu final<br/>+ éditeur visuel]
+    H --> I[Export zip]
+```
+
+Le modèle ne devine rien « à l'œil » : il reçoit l'image cible, un **dictionnaire de style** extrait du PDF (position,
+taille et couleur exactes de chaque texte), un **calque décor** sans texte pour découper les éléments graphiques, et une
+**référence de template** déjà intégrée en production.
+
+## Installation
+
+### Prérequis
+
+| Outil | Rôle |
+| --- | --- |
+| Python 3.12+ | backend FastAPI et scripts d'extraction |
+| Node.js 20+ | frontend Vite, esbuild et Tailwind (compilation des templates) |
+| Poppler (`pdftoppm`, `pdftohtml`, `pdfinfo`) | rasterisation et extraction du PDF |
+| LibreOffice (`soffice`) | conversion DOCX → PDF et prévisualisation Jinja |
+| Chromium via Playwright | captures du rendu |
+
+Sur macOS :
+
+```bash
+brew install poppler
+brew install --cask libreoffice
+```
+
+### Dépendances
+
+```bash
+# Backend
+python3 -m venv venv
+source venv/bin/activate
+pip install fastapi "uvicorn[standard]" python-multipart python-dotenv \
+            openai anthropic docxtpl python-docx pikepdf pillow numpy lxml playwright
+playwright install chromium
+
+# Outils Node de la pipeline (esbuild, tailwind, pixelmatch)
+cd pipeline && npm install && cd ..
+
+# Frontend
+cd frontend && npm install && cd ..
+```
+
+## Configuration
+
+Copier `pipeline/.env.example` vers `backend/.env` et renseigner la clé du fournisseur :
+
+```env
+MOONSHOT_API_KEY=...        # Kimi K3.1 Pro (modèle par défaut)
+ANTHROPIC_API_KEY=...       # uniquement si MODEL pointe sur un modèle Claude
+```
+
+Le modèle se change dans une seule constante, `MODEL`, de `backend/cvsmart/pipeline/services/model_client_service.py`.
+La table `PRICING` du même fichier sert à estimer le coût de chaque passe.
+
+Variable optionnelle : `SOFFICE_PATH`, si `soffice` n'est pas trouvé automatiquement.
+
+## Lancer le projet
+
+```bash
+# Terminal 1 : backend (port 8100)
+cd backend
+../venv/bin/uvicorn cvsmart.main:app --port 8100
+
+# Terminal 2 : frontend (port 5173, proxy vers le backend)
+cd frontend
+npm run dev
+```
+
+Ouvrir <http://localhost:5173>, déposer un PDF ou un DOCX, choisir l'effort de raisonnement, lancer la génération.
+
