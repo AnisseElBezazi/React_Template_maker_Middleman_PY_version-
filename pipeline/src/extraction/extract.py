@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from converter import (  # noqa: E402
     pdf_to_html, run_pdftohtml_complex, parse_css_classes, parse_runs,
-    estimate_geometry, cluster_columns, PAGE_DIV_RE,
+    estimate_geometry, cluster_columns, PAGE_DIV_RE, strip_pdf_text,
 )
 import subprocess  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -189,6 +189,22 @@ def main():
     dictionary_html = pdf_to_html(pdf_bytes, first_page=first_page, last_page=last_page, zoom=zoom)
     (out_dir / "dictionary.html").write_text(dictionary_html, encoding="utf-8")
 
+    # Second dictionnaire, SANS AUCUN TEXTE (operateurs Tj/TJ retires du PDF
+    # avant meme de le passer a pdftohtml) -- reserve a l'extraction du
+    # calque decor (voir extract_background.py). Le mode "-c" de pdftohtml
+    # traite tout texte a l'identique, y compris une icone dessinee via une
+    # police de symboles (ex: un chevron de watermark) : sur un cas reel, ça
+    # a fait disparaitre le watermark du calque exactement comme du texte
+    # normal, et le repli de secours de crop_image.py (qui redecoupe la
+    # capture BRUTE quand le calque ressort vide) a fini par recuperer un
+    # fragment de balise Jinja a la place. Un calque genere depuis un PDF qui
+    # n'a plus le moindre texte ne peut plus jamais laisser fuir de texte de
+    # cette facon, meme via ce repli -- et une IA qui voit un fond deja
+    # complet n'a plus besoin d'essayer de decouper cette zone du tout.
+    notext_pdf_bytes = strip_pdf_text(pdf_bytes)
+    dictionary_notext_html = pdf_to_html(notext_pdf_bytes, first_page=first_page, last_page=last_page, zoom=zoom)
+    (out_dir / "dictionary_notext.html").write_text(dictionary_notext_html, encoding="utf-8")
+
     # Images intégrées réelles (photos de fond, logos) -- jamais inventées,
     # jamais un placeholder : ce sont les vrais fichiers. Les indices se
     # poursuivent d'une page à l'autre pour qu'une image de la page 2
@@ -203,6 +219,7 @@ def main():
     )
 
     print("DICTIONARY:" + str(out_dir / "dictionary.html"))
+    print("DICTIONARY_NOTEXT:" + str(out_dir / "dictionary_notext.html"))
     print("JINJA_TAGS:" + str(out_dir / "jinja_tags.json"))
     print("EXTRACTED_IMAGES:" + str(out_dir / "extracted_images.json"))
     print("PAGES:" + json.dumps(pages))
