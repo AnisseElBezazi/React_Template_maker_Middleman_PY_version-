@@ -126,6 +126,8 @@ def run_pipeline(
     def _find(prefix):
         return next((l[len(prefix):] for l in lines if l.startswith(prefix)), None)
     dictionary_path = Path(_find("DICTIONARY:"))
+    dictionary_notext_raw = _find("DICTIONARY_NOTEXT:")
+    dictionary_notext_path = Path(dictionary_notext_raw) if dictionary_notext_raw else dictionary_path
     jinja_tags_path = _find("JINJA_TAGS:")
     extracted_images_path = _find("EXTRACTED_IMAGES:")
     target_paths = [Path(l[len("TARGET:"):]) for l in lines if l.startswith("TARGET:")]
@@ -146,7 +148,7 @@ def run_pipeline(
     for i in range(page_count):
         bg_path = out_dir / f"background-layer-{i + 1}.png"
         bg_result = subprocess.run(
-            [python_bin, str(EXTRACT_BACKGROUND_PY), str(dictionary_path), str(bg_path), str(width), str(height), str(i + 1)],
+            [python_bin, str(EXTRACT_BACKGROUND_PY), str(dictionary_notext_path), str(bg_path), str(width), str(height), str(i + 1)],
             capture_output=True, text=True,
         )
         background_paths.append(bg_path if bg_result.returncode == 0 and bg_path.exists() else None)
