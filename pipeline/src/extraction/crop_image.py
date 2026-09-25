@@ -125,7 +125,7 @@ def main(src=None, x=None, y=None, w=None, h=None, out=None):
     cropped.save(out)
 
 
-def is_blank(path, threshold=3.0, white_level=250.0):
+def is_blank(path, threshold=0.5, white_level=250.0):
     """Découpe où RIEN n'a été dessiné : uniforme ET blanche.
 
     Le calque décor ne contient aucun texte -- or certaines icônes du PDF
@@ -138,10 +138,29 @@ def is_blank(path, threshold=3.0, white_level=250.0):
     contenu légitime. Ne juger que sur la variance faisait passer un aplat
     gris pour une découpe ratée, déclenchait le repli sur la capture cible,
     et ramenait avec lui tout le texte imprimé dessus.
+
+    La mesure porte sur le COEUR de la découpe (même logique que le `core`
+    de `trim_stray_border` ci-dessus), pas sur l'image entière : un filigrane
+    très clair (gris quasi blanc) juste à côté d'un autre élément se fait
+    polluer sur ses bords par le lissage du redimensionnement LANCZOS de
+    `extract_background.py`, ce qui gonfle l'écart-type mesuré plein-cadre.
+    Cas réel observé : la découpe d'un chevron de filigrane très pâle
+    donnait un écart-type plein-cadre de 2.33 -- sous l'ancien seuil de 3.0
+    -- ce qui la faisait classer à tort comme vide, déclenchait le repli sur
+    la capture cible, et y faisait fuiter une balise Jinja non résolue restée
+    visible à cet endroit précis. Sur le seul coeur, une découpe réellement
+    vide mesure 0.0 pile (vérifié y compris juste à côté d'un autre élément,
+    où le bruit de bord plein-cadre montait à 1.56), alors que ce même
+    chevron mesure de 0.59 à 2.33 selon le cadrage -- une marge large et
+    fiable entre "rien" et "un filigrane légitime mais très pâle".
     """
     from PIL import Image as _Image
     import statistics
-    px = list(_Image.open(path).convert("RGB").getdata())
+    img = _Image.open(path).convert("RGB")
+    w, h = img.size
+    if w >= 8 and h >= 8:
+        img = img.crop((w // 4, h // 4, w - w // 4, h - h // 4))
+    px = list(img.getdata())
     if not px:
         return True
     lum = [sum(p) / 3 for p in px]
