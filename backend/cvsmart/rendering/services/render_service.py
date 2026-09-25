@@ -87,14 +87,17 @@ def build_html(jsx_path: Path, bundle: str) -> tuple[str, str | None]:
 
 
 # Les vraies pages sont les enfants directs du conteneur qui occupent toute sa
-# largeur : le moteur de pagination monte aussi un noeud de mesure cache, plus
-# etroit, qu'il ne faut pas confondre avec une page.
+# largeur : le moteur de pagination monte aussi un noeud de mesure cache
+# (aria-hidden), habituellement plus etroit -- mais un template qui passe
+# contentSidePaddingRatio=0 lui donne exactement la largeur du conteneur, ce
+# qui le faisait passer pour une page (capture hors-ecran incoherente).
 MARK_PAGES_JS = """() => {
   const comp = document.querySelector("#root")?.firstElementChild;
   if (!comp) return 0;
   const full = comp.getBoundingClientRect().width;
   let n = 0;
   for (const child of comp.children) {
+    if (child.getAttribute("aria-hidden") === "true") continue;
     if (Math.abs(child.getBoundingClientRect().width - full) > 2) continue;
     child.setAttribute("data-cv-page", String(++n));
   }
