@@ -23,6 +23,7 @@ from cvsmart.pipeline.services.jsx_artifacts_service import (
 )
 from cvsmart.pipeline.services.prompt_helpers import (
     read_prompt_template, read_template_file, extract_code, assert_valid_jsx,
+    ensure_root_max_width, fix_double_assets_prefix,
 )
 
 EXTRACT_PY = NODE_TOOLS_ROOT / "src" / "extraction" / "extract.py"

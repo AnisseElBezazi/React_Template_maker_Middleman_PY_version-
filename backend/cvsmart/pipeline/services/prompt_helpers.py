@@ -29,6 +29,37 @@ def extract_code(text: str) -> str:
     return code
 
 
+ROOT_CLASSNAME_RE = re.compile(r'(ref=\{rootRef\}[^>]*?className=")([^"]*)(")')
+
+
+def ensure_root_max_width(code: str) -> str:
+    """Garde-fou mecanique : le conteneur racine (ref={rootRef}) doit toujours
+    porter max-w-xl (voir regle CONTENEUR RACINE dans pass1.md), sinon le texte
+    devient trop gros une fois integre a Middleman. Constate sur 35 des 38 runs
+    generes malgre la regle et l'exemple Visian corrects dans le prompt -- ne pas
+    compter uniquement sur le modele pour cette invariante mecanique. (max-w-4xl
+    etait la valeur d'origine ; trop grand une fois integre a Middleman, calibre
+    en conditions reelles sur plusieurs templates jusqu'a max-w-xl.)"""
+    def _inject(match: re.Match) -> str:
+        classes = match.group(2)
+        if "max-w-xl" in classes:
+            return match.group(0)
+        classes = re.sub(r'\bmax-w-\S+\s*', '', classes).strip()
+        return f"{match.group(1)}{classes} max-w-xl{match.group(3)}"
+    return ROOT_CLASSNAME_RE.sub(_inject, code, count=1)
+
+
+DOUBLE_ASSETS_RE = re.compile(r'\bassets\??\.assets\b')
+
+
+def fix_double_assets_prefix(code: str) -> str:
+    """Garde-fou mecanique : `assets.assets.xxx` (au lieu de `assets.xxx`), avec
+    ou sans chainage optionnel, plante tout le rendu (Cannot read properties of
+    undefined) -- constate sur AS International. Aucun cas legitime n'a `assets`
+    imbrique sous lui-meme, donc la correction est sans risque."""
+    return DOUBLE_ASSETS_RE.sub('assets', code)
+
+
 def assert_valid_jsx(code: str, step: str) -> None:
     """Echoue vite avec un message clair si la reponse extraite n'a
     manifestement pas de JSX exploitable (ex: max_tokens entierement
