@@ -100,17 +100,6 @@ def run_pipeline(
 
     cv_data_path = cv_data_path or PIPELINE_SAMPLE_CVDATA
     using_custom_schema = False
-    # Si un extra_config (schema CvParserConfig du client/template reel) est
-    # fourni, il remplace le schema generique : chaque template peut avoir
-    # des champs différents, donc un schéma unique pour tous ne colle pas
-    # toujours -- certains champs manquent et le modele peut inventer des
-    # noms de champs qui n'existent pas pour CE client precis.
-    if extra_config_path:
-        extra_config = json.loads(Path(extra_config_path).read_text(encoding="utf-8"))
-        generated = generate_sample_cv_data(extra_config)
-        cv_data_path = out_dir / "generated_cvdata.json"
-        cv_data_path.write_text(json.dumps(generated, indent=2, ensure_ascii=False), encoding="utf-8")
-        using_custom_schema = True
 
     # --- Etape 1 : extraction (screenshots cibles + dictionnaire de style) ---
     all_pages = str(page_number).lower() == "all"
@@ -140,6 +129,22 @@ def run_pipeline(
     width, height = png_size(target_path)
     jinja_tags = json.loads(Path(jinja_tags_path).read_text(encoding="utf-8")) if jinja_tags_path else []
     extracted_images = json.loads(Path(extracted_images_path).read_text(encoding="utf-8")) if extracted_images_path else []
+    # Si un extra_config (schema CvParserConfig du client/template reel) est
+    # fourni, il remplace le schema generique : chaque template peut avoir
+    # des champs différents, donc un schéma unique pour tous ne colle pas
+    # toujours -- certains champs manquent et le modele peut inventer des
+    # noms de champs qui n'existent pas pour CE client precis. Fait APRES
+    # l'extraction (pas avant) pour pouvoir passer les vraies balises Jinja :
+    # un champ qu'elles referencent (`data.xxx`) mais que CET extra_config
+    # precis ne declare pas est comble depuis le schema generique plutot que
+    # de rester vide dans l'apercu (voir generate_sample_cv_data).
+    if extra_config_path:
+        extra_config = json.loads(Path(extra_config_path).read_text(encoding="utf-8"))
+        generated = generate_sample_cv_data(extra_config, jinja_tags=jinja_tags)
+        cv_data_path = out_dir / "generated_cvdata.json"
+        cv_data_path.write_text(json.dumps(generated, indent=2, ensure_ascii=False), encoding="utf-8")
+        using_custom_schema = True
+
     on_progress("extract", f"{page_count} page(s) cible ({width}x{height}px), {len(jinja_tags)} tag(s) Jinja, "
                             f"{len(extracted_images)} image(s) extraite(s).")
 
