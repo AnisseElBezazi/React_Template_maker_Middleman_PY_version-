@@ -275,7 +275,7 @@ def run_pipeline(
         *background_image_blocks,
         *extracted_image_blocks,
     ], effort=pass1_effort)
-    jsx1 = extract_code(jsx1_raw)
+    jsx1 = fix_double_assets_prefix(ensure_root_max_width(extract_code(jsx1_raw)))
     assert_valid_jsx(jsx1, "1")
     jsx1_path = out_dir / "attempt1.jsx"
     jsx1_path.write_text(jsx1, encoding="utf-8")
@@ -345,7 +345,7 @@ def run_pipeline(
                      .replace("{{DICTIONARY}}", dictionary_compact)
                      .replace("{{CANVAS_SIZE}}", f"{width} x {height}"))
     jsx2_raw = client.call("pass2", [*pass2_image_blocks, {"type": "text", "text": pass2_prompt}], effort="high")
-    jsx2 = extract_code(jsx2_raw)
+    jsx2 = fix_double_assets_prefix(ensure_root_max_width(extract_code(jsx2_raw)))
     assert_valid_jsx(jsx2, "2")
     jsx2_path = out_dir / "attempt2.jsx"
     jsx2_path.write_text(jsx2, encoding="utf-8")
@@ -380,7 +380,7 @@ def run_pipeline(
                          .replace("{{JSX}}", jsx2)
                          .replace("{{FINDINGS}}", "\n".join(f"{i + 1}. [{f['rule']}] {f['message']}" for i, f in enumerate(findings))))
         jsx3_raw = client.call("pass3", [{"type": "text", "text": pass3_prompt}], effort="low")
-        jsx3 = extract_code(jsx3_raw)
+        jsx3 = fix_double_assets_prefix(ensure_root_max_width(extract_code(jsx3_raw)))
         assert_valid_jsx(jsx3, "3")
         jsx3_path.write_text(jsx3, encoding="utf-8")
         place_extracted_images(jsx3, out_dir)
