@@ -416,7 +416,7 @@ def run_pipeline(
                     if match:
                         old_value = float(match.group(2))
                         new_value = f"{old_value * median:.2f}"
-                        jsx4 = root_font_re.sub(lambda m: f"{m.group(1)}{new_value}{m.group(3)}{new_value}{m.group(4)}", jsx3)
+                        jsx4 = root_font_re.sub(lambda m: f"{m.group(1)}{new_value}{m.group(3)}{new_value}{m.group(5)}", jsx3)
                         final_path = out_dir / "final.jsx"
                         final_path.write_text(jsx4, encoding="utf-8")
                         place_extracted_images(jsx4, out_dir)
