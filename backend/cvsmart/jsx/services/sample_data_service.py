@@ -207,7 +207,7 @@ def _ensure_path(result: dict, dotted_path: str | None) -> None:
     obj[leaf] = known[0] if known else fallback_value(leaf, leaf)
 
 
-def generate_sample_cv_data(extra_config: dict) -> dict:
+def generate_sample_cv_data(extra_config: dict, jinja_tags: list[str] | None = None) -> dict:
     result: dict = {}
     for section in extra_config.get("frontend_cvparser_config") or []:
         data_name = section.get("data_name")
@@ -222,6 +222,23 @@ def generate_sample_cv_data(extra_config: dict) -> dict:
             result[data_name] = [gen_section_array_entry(section, 0), gen_section_array_entry(section, 1)]
         else:
             result[data_name] = None  # data_type non reconnu -- ne bloque pas le reste
+
+    # Champ reference par le VRAI template Jinja (`data.xxx`) mais absent de
+    # CET extra_config precis : un extra_config incomplet, pas la preuve que
+    # le champ n'existe pas cote CV Smart reel -- le composant genere, lui,
+    # lit deja `cvData?.xxx` en se basant sur la vraie balise Jinja, pas sur
+    # l'extra_config. On comble depuis le schema generique quand il connait
+    # ce nom de champ, plutot que de laisser un trou dans l'apercu alors que
+    # la section s'affichera bel et bien en production si elle est alimentee
+    # par ailleurs.
+    if jinja_tags:
+        referenced = {m.group(1) for tag in jinja_tags for m in DATA_REF_RE.finditer(tag)}
+        missing = referenced - result.keys()
+        if missing:
+            generic = json.loads(PIPELINE_SAMPLE_CVDATA.read_text(encoding="utf-8"))
+            for name in missing:
+                if name in generic:
+                    result[name] = generic[name]
 
     _ensure_path(result, extra_config.get("cv_name"))
     _ensure_path(result, extra_config.get("cv_job_title"))
