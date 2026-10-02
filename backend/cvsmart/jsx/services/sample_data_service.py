@@ -118,9 +118,13 @@ def contextual_value(section_data_name: str, item: dict, seed: int):
 def leaf_value(section_data_name: str, item: dict, seed: int):
     if item.get("data_type") == "array":
         base = contextual_value(section_data_name, item, seed)
+        # Les deux items different de "type" (paragraph vs list) : la plupart
+        # des templates reels rendent chaque type differemment (puce visible
+        # ou non) -- ne jamais exercer "list" ici masquait ce rendu dans tout
+        # aperçu genere depuis un extra_config.
         return [
             {"type": "paragraph", "text": base},
-            {"type": "paragraph", "text": fallback_value(item.get("data_name"), item.get("display_name"))},
+            {"type": "list", "text": fallback_value(item.get("data_name"), item.get("display_name"))},
         ]
     return contextual_value(section_data_name, item, seed)
 
