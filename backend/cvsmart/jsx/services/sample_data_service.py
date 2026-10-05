@@ -1,5 +1,10 @@
+import json
 import re
 from datetime import date
+
+from cvsmart.shared.paths_service import PIPELINE_SAMPLE_CVDATA
+
+DATA_REF_RE = re.compile(r"\bdata\.(\w+)")
 
 # Valeurs connues, indexees par "section.champ" (section = data_name du bloc
 # top-level, champ = data_name du champ a l'interieur) -- reprend les memes
@@ -85,7 +90,7 @@ KEYWORD_FALLBACKS = [
     # entre "fonction" et "nelles") -- bug deja rencontre : "competences
     # fonctionnelles" tombait a tort sur l'exemple de titre de poste.
     (re.compile(r"\btitre\b|\btitle\b|\bposte\b|\bfonction\b"), "Consultant Senior"),
-    (re.compile(r"description|contexte|context|r[ée]alisation"), "Exemple de réalisation menée dans ce cadre."),
+    (re.compile(r"description|contexte|context|r[ée]alisation"), "Exemple de réalisation menée dans ce cadre, avec un impact mesurable sur les indicateurs clés du projet."),
     (re.compile(r"[ée]cole|\bschool\b|universit[ée]|formation"), "École Exemple"),
     (re.compile(r"entreprise|soci[ée]t[ée]|\bcompany\b|\bclient\b"), "Entreprise Exemple"),
     # "nom/name" arrive APRES les regles specifiques : sinon "company_name" et
