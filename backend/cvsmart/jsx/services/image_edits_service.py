@@ -95,6 +95,14 @@ def _override_props(edit: dict, move: bool) -> list[str]:
             "position: 'absolute'", f"left: '{edit['left']}em'", f"top: '{edit['top']}em'",
             "right: 'auto'", "bottom: 'auto'",
         ]
+    else:
+        # Image restee dans le flux (nudge par marge cote editeur) : jamais
+        # de position absolue, sous peine de faire s'effondrer un parent
+        # "auto" dont la largeur sert de repere en % a un autre element
+        # (ex: bandeau de titre avec du texte ancre en % par-dessus).
+        for prop in ("marginLeft", "marginTop"):
+            if edit.get(prop) is not None:
+                props.append(f"{prop}: '{edit[prop]}em'")
     if edit.get("width") is not None:
         props.append(f"width: '{edit['width']}em'")
     if edit.get("height") is not None:
