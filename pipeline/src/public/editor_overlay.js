@@ -379,14 +379,29 @@
     const id = selected.dataset.cvimg;
     const g = geom(selected);
     const movable = selected.dataset.cvMovable === "1";
-    edits[id] = movable
-      ? {
-          left: toEm(g.left, selected),
-          top: toEm(g.top, selected),
-          width: toEm(g.width, selected),
-          height: toEm(g.height, selected),
-        }
-      : { width: toEm(g.width, selected), height: toEm(g.height, selected) };
+    const absolute = getComputedStyle(selected).position === "absolute";
+    if (!movable) {
+      edits[id] = { width: toEm(g.width, selected), height: toEm(g.height, selected) };
+    } else if (absolute) {
+      edits[id] = {
+        left: toEm(g.left, selected),
+        top: toEm(g.top, selected),
+        width: toEm(g.width, selected),
+        height: toEm(g.height, selected),
+      };
+    } else {
+      // Restee dans le flux (nudge par marge, comme le texte) : jamais de
+      // position absolue ici, sous peine de faire s'effondrer un parent
+      // "auto" dont la largeur sert de repere en % a un autre element (voir
+      // le commentaire sur `keepInFlow`). On ne fige que ce que l'editeur a
+      // explicitement pose.
+      const entry = {};
+      if (selected.style.marginLeft) entry.marginLeft = toEm(spacingPx(selected, "w", "margin"), selected);
+      if (selected.style.marginTop) entry.marginTop = toEm(spacingPx(selected, "n", "margin"), selected);
+      if (selected.style.width) entry.width = toEm(parseFloat(selected.style.width), selected);
+      if (selected.style.height) entry.height = toEm(parseFloat(selected.style.height), selected);
+      edits[id] = entry;
+    }
     parent.postMessage({ type: "cv-edits", edits, textEdits, classEdits }, "*");
     notifySelection();
     pushHistory();
@@ -470,7 +485,14 @@
         e.preventDefault();
         return;
       }
-      drag = { mode: "resize", corner: handle.dataset.handle, x0: e.clientX, y0: e.clientY, g, pointerId: e.pointerId, turns: quarterTurns(selected) };
+      // Un texte OU une image encore dans le flux normal (pas absolute) --
+      // ex: l'image d'un bandeau de titre qui donne sa largeur au conteneur
+      // pendant qu'un texte ancre en % dessus -- ne doit JAMAIS passer en
+      // `absolute` au redimensionnement (voir plus bas), sous peine de sortir
+      // du flux et de casser tout l'agencement autour (le conteneur perd sa
+      // largeur, ce qui decale ce qui est positionne en % par rapport a lui).
+      const keepInFlow = getComputedStyle(selected).position !== "absolute";
+      drag = { mode: "resize", corner: handle.dataset.handle, x0: e.clientX, y0: e.clientY, g, pointerId: e.pointerId, turns: quarterTurns(selected), keepInFlow };
       setDragCursor(handle.dataset.handle);
       capture();
       e.preventDefault();
