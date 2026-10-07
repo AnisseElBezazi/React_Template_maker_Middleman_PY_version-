@@ -522,7 +522,21 @@
         return;
       }
       if (img.dataset.cvMovable === "1") {
-        drag = { mode: "move", x0: e.clientX, y0: e.clientY, g: geom(img), pointerId: e.pointerId };
+        // Une image encore dans le flux (pas absolute) ne doit pas y passer
+        // au premier deplacement : contrairement a un filigrane deja libre,
+        // elle peut donner sa largeur a un parent "auto" dont depend la
+        // position en % d'un autre element (voir le bandeau de titre) --
+        // la sortir du flux collapse ce parent et decale ce qui est dessus.
+        const absolute = getComputedStyle(img).position === "absolute";
+        drag = {
+          mode: absolute ? "move" : "nudge",
+          x0: e.clientX, y0: e.clientY, pointerId: e.pointerId,
+          g: geom(img),
+          startMargins: {
+            left: spacingPx(img, "w", "margin"),
+            top: spacingPx(img, "n", "margin"),
+          },
+        };
         setDragCursor("move");
         capture();
       }
@@ -680,6 +694,18 @@
     const map = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
     const d = map[e.key];
     if (!d || selected.dataset.cvMovable !== "1") return;
+    // Meme principe que le glisser (mode "nudge") : un texte/div/image deja
+    // dans le flux normal y reste, on ajuste sa marge plutot que de le
+    // faire passer en `absolute` (voir le commentaire sur `keepInFlow`
+    // plus haut).
+    if (getComputedStyle(selected).position !== "absolute") {
+      setSpacing(selected, "w", "margin", spacingPx(selected, "w", "margin") + d[0]);
+      setSpacing(selected, "n", "margin", spacingPx(selected, "n", "margin") + d[1]);
+      record();
+      drawBox();
+      e.preventDefault();
+      return;
+    }
     const g = geom(selected);
     selected.style.position = "absolute";
     selected.style.right = "auto";
