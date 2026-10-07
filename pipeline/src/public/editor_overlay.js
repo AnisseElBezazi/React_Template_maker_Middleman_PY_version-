@@ -612,47 +612,53 @@
       selected.style.height = h + "px";
       selected.style.maxWidth = "none";
 
-      // Tirer vers la gauche ou vers le haut déplace aussi l'origine, sinon
-      // l'élément grandirait vers le côté opposé à celui qu'on tire.
-      // `left` et `top` sont TOUJOURS réécrits : beaucoup d'images sont
-      // placées via `right`/`bottom`, et neutraliser ces propriétés sans
-      // fixer les autres ferait retomber l'élément à l'origine du parent.
-      selected.style.position = "absolute";
-      selected.style.right = "auto";
-      selected.style.bottom = "auto";
-      let newLeft = west ? g.left + (g.width - w) : g.left;
-      let newTop = north ? g.top + (g.height - h) : g.top;
+      // Un texte/div qui etait DEJA dans le flux normal (pas absolute) le
+      // reste : on ne touche qu'a sa taille, jamais a sa position. Le
+      // repositionner en `absolute` le sortirait du flex/bloc parent et
+      // casserait tout l'agencement autour (voisins qui se recalent).
+      if (!drag.keepInFlow) {
+        // Tirer vers la gauche ou vers le haut déplace aussi l'origine, sinon
+        // l'élément grandirait vers le côté opposé à celui qu'on tire.
+        // `left` et `top` sont TOUJOURS réécrits : beaucoup d'images sont
+        // placées via `right`/`bottom`, et neutraliser ces propriétés sans
+        // fixer les autres ferait retomber l'élément à l'origine du parent.
+        selected.style.position = "absolute";
+        selected.style.right = "auto";
+        selected.style.bottom = "auto";
+        let newLeft = west ? g.left + (g.width - w) : g.left;
+        let newTop = north ? g.top + (g.height - h) : g.top;
 
-      // Élément pivoté d'un quart de tour : la rotation étant appliquée
-      // autour du CENTRE, la boîte visible à l'écran vaut
-      //   écran_gauche = left + largeur/2 - hauteur/2
-      //   écran_haut   = top  + hauteur/2 - largeur/2
-      // Les DEUX dimensions influencent donc CHAQUE coordonnée écran :
-      // modifier la seule hauteur décalait aussi le haut, ce qui faisait
-      // glisser l'image alors qu'un seul côté était tiré. On résout donc
-      // directement pour que le bord opposé à la poignée reste immobile.
-      if (drag.turns % 2 !== 0) {
-        const dW = w - g.width;
-        const dH = h - g.height;
-        const sh = drag.corner; // poignée telle qu'elle apparaît à l'écran
-        const dScreenLeft = sh.includes("w") ? -dH : 0; // bord droit ancré
-        const dScreenTop = sh.includes("n") ? -dW : 0; // bord bas ancré
-        newLeft = g.left + dScreenLeft - dW / 2 + dH / 2;
-        newTop = g.top + dScreenTop - dH / 2 + dW / 2;
+        // Élément pivoté d'un quart de tour : la rotation étant appliquée
+        // autour du CENTRE, la boîte visible à l'écran vaut
+        //   écran_gauche = left + largeur/2 - hauteur/2
+        //   écran_haut   = top  + hauteur/2 - largeur/2
+        // Les DEUX dimensions influencent donc CHAQUE coordonnée écran :
+        // modifier la seule hauteur décalait aussi le haut, ce qui faisait
+        // glisser l'image alors qu'un seul côté était tiré. On résout donc
+        // directement pour que le bord opposé à la poignée reste immobile.
+        if (drag.turns % 2 !== 0) {
+          const dW = w - g.width;
+          const dH = h - g.height;
+          const sh = drag.corner; // poignée telle qu'elle apparaît à l'écran
+          const dScreenLeft = sh.includes("w") ? -dH : 0; // bord droit ancré
+          const dScreenTop = sh.includes("n") ? -dW : 0; // bord bas ancré
+          newLeft = g.left + dScreenLeft - dW / 2 + dH / 2;
+          newTop = g.top + dScreenTop - dH / 2 + dW / 2;
+        }
+
+        // Maj : on redimensionne DEPUIS LE CENTRE -- il reste au même endroit
+        // et l'élément grandit symétriquement des deux côtés (au lieu
+        // d'ancrer le bord opposé). La rotation s'appliquant autour du centre,
+        // le centre à l'écran coïncide avec le centre de la boîte de mise en
+        // page : la même formule vaut donc pour une image pivotée.
+        if (e.shiftKey) {
+          newLeft = g.left + (g.width - w) / 2;
+          newTop = g.top + (g.height - h) / 2;
+        }
+
+        selected.style.left = newLeft + "px";
+        selected.style.top = newTop + "px";
       }
-
-      // Maj : on redimensionne DEPUIS LE CENTRE -- il reste au même endroit
-      // et l'élément grandit symétriquement des deux côtés (au lieu
-      // d'ancrer le bord opposé). La rotation s'appliquant autour du centre,
-      // le centre à l'écran coïncide avec le centre de la boîte de mise en
-      // page : la même formule vaut donc pour une image pivotée.
-      if (e.shiftKey) {
-        newLeft = g.left + (g.width - w) / 2;
-        newTop = g.top + (g.height - h) / 2;
-      }
-
-      selected.style.left = newLeft + "px";
-      selected.style.top = newTop + "px";
     }
     drawBox();
   });
