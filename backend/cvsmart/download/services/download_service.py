@@ -1,3 +1,4 @@
+import json
 import re
 import subprocess
 import time
@@ -6,22 +7,35 @@ from pathlib import Path
 from cvsmart.shared.paths_service import TEMPLATES_ROOT, NODE_TOOLS_ROOT
 from cvsmart.rendering.services.tailwind_service import compile_tailwind, TAILWIND_DIR
 
-IMAGE_IMPORT_RE = re.compile(r"@/images/cv-templates/([a-zA-Z0-9_-]+)/([a-zA-Z0-9_-]+\.(?:png|jpe?g))")
 COMPONENT_NAME_RE = re.compile(r"export\s+default\s+(?:function\s+)?(\w+)")
 
 
 def collect_download_assets(jsx_path: Path) -> dict:
     """Rassemble tout ce qu'il faut pour utiliser le composant genere
-    ailleurs : le .jsx final et les vraies images qu'il reference (deja
-    placees par le pipeline dans templates copy/images/cv-templates/<slug>/)."""
+    ailleurs : le .jsx final et les vraies images qu'il reference.
+
+    Les images arrivent par la prop `assets` (pass1.md, regle "JAMAIS PAR UN
+    IMPORT") -- le JSX ne contient donc plus d'`import '@/images/...'` a
+    parser depuis longtemps (verifie : aucune run de cette session n'en
+    genere). La correspondance cle -> image reelle vient de `assets-map.json`
+    (ecrit par le pipeline a cote du JSX, deja utilise par la preview locale
+    -- voir render_service.build_assets), pas d'un scan du code source."""
     jsx_code = Path(jsx_path).read_text(encoding="utf-8")
     match = COMPONENT_NAME_RE.search(jsx_code)
     component_name = match.group(1) if match else "TemplateHtml"
+
     images = []
-    for slug, filename in IMAGE_IMPORT_RE.findall(jsx_code):
-        abs_path = TEMPLATES_ROOT / "images" / "cv-templates" / slug / filename
-        if abs_path.exists():
-            images.append({"abs": abs_path, "zip_path": f"images/cv-templates/{slug}/{filename}"})
+    map_file = Path(jsx_path).parent / "assets-map.json"
+    if map_file.exists():
+        try:
+            mapping = json.loads(map_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            mapping = {}
+        for key, index in mapping.items():
+            abs_path = Path(jsx_path).parent / f"extracted-{index}.png"
+            if abs_path.exists():
+                images.append({"key": key, "abs": abs_path, "zip_path": f"assets/{key}.png"})
+
     return {"jsx_code": jsx_code, "component_name": component_name, "images": images}
 
 
