@@ -1,4 +1,5 @@
 import io
+import json
 import zipfile
 from pathlib import Path
 
@@ -80,13 +81,10 @@ CLÉS D'IMAGES ATTENDUES DANS assets
             zf.writestr(f"{component_name}.jsx", db["code"])
             if css_source:
                 zf.writestr(f"{component_name}.css", css_source)
-            manifest = {a["key"]: f"assets/{a['key']}{Path(a['file']).suffix or '.png'}" for a in db["assets"]}
-            import json
+            manifest = {img["key"]: img["zip_path"] for img in images}
             zf.writestr("assets-manifest.json", json.dumps(manifest, indent=2))
-            for a in db["assets"]:
-                src = next((i for i in images if i["zip_path"].endswith(Path(a["file"]).name)), None)
-                if src:
-                    zf.write(src["abs"], f"assets/{a['key']}{Path(a['file']).suffix or '.png'}")
+            for img in images:
+                zf.write(img["abs"], img["zip_path"])
 
         zf.writestr(f"preview/{component_name}.jsx", jsx_code)
         zf.writestr("README.txt", readme)
