@@ -3,6 +3,20 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+
+class NoCacheStaticFiles(StaticFiles):
+    """Les fichiers sous /out (html/png d'un run) sont réécrits EN PLACE au
+    même chemin par rerender/apply-edits/chat-edit -- un navigateur qui les a
+    déjà mis en cache (StaticFiles ne pose aucun Cache-Control par défaut,
+    donc soumis à l'heuristique de fraîcheur du navigateur) continue de
+    montrer l'ancienne version après une modification, exactement le bug déjà
+    corrigé pour editor_overlay.js."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        return response
+
 from cvsmart.shared.paths_service import BACKEND_ROOT, PROJECT_ROOT, NODE_TOOLS_ROOT, OUT_ROOT, UPLOADS_ROOT, ensure_roots
 from cvsmart.runs.urls import router as runs_router
 from cvsmart.download.urls import router as download_router
@@ -33,7 +47,7 @@ app.include_router(download_router)
 app.include_router(editor_router)
 app.include_router(jinja_router)
 
-app.mount("/out", StaticFiles(directory=OUT_ROOT), name="out")
+app.mount("/out", NoCacheStaticFiles(directory=OUT_ROOT), name="out")
 app.mount("/uploads", StaticFiles(directory=UPLOADS_ROOT), name="uploads")
 
 
