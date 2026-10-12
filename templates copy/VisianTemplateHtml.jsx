@@ -52,12 +52,15 @@ function DescriptionList({ description, variant = 'full' }) {
         const bullet = variant === 'summary'
           ? (item.type === 'list' ? '•' : isIndented ? 'o' : '§')
           : '•'
+        // Puce toujours sur un <span> à part avec une taille explicite (jamais inline/hérité) :
+        // ce template sert d'exemple à d'autres générations, sa taille de puce (1em ici) est
+        // celle qui convient à SON design, recalibre-la (0.5-0.7em pour un glyphe plein, 1.3-1.4em
+        // pour un "•" isolé) pour chaque nouveau template selon l'image cible.
         return (
-          <p key={item.text} className={isIndented ? 'pl-8' : 'pl-4'}>
-            {bullet}
-            {' '}
-            {item.text}
-          </p>
+          <div key={item.text} className={`flex items-baseline gap-1 ${isIndented ? 'pl-8' : 'pl-4'}`}>
+            <span className="shrink-0 text-[1em] leading-none">{bullet}</span>
+            <span className="min-w-0">{item.text}</span>
+          </div>
         )
       })}
     </div>
