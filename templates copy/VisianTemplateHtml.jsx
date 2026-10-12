@@ -269,7 +269,7 @@ function VisianTemplateHtml({ cvData }) {
   }))
 
   return (
-    <div ref={rootRef} className="mx-auto flex max-w-4xl flex-col gap-6" style={{ fontSize: containerWidth ? `${(containerWidth * (20 / CANVAS_W)).toFixed(2)}px` : '20px' }}>
+    <div ref={rootRef} className="mx-auto flex max-w-xl flex-col gap-6" style={{ fontSize: containerWidth ? `${(containerWidth * (20 / CANVAS_W)).toFixed(2)}px` : '20px' }}>
 
       <div className="visian-smart-page" style={{ backgroundImage: `url(${coverBg})` }}>
         <CoverHeader personalInformation={personalInformation} />
