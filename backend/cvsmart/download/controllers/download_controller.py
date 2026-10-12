@@ -25,8 +25,9 @@ def download_run(run_id: str):
     jsx_code, component_name, images = assets["jsx_code"], assets["component_name"], assets["images"]
 
     # Conversion vers le format de l'app : fichier evalue comme corps de
-    # fonction (React/engine injectes) et images lues depuis la base via
-    # `assets`. La preview, elle, continue de fonctionner avec les imports.
+    # fonction (React/engine injectes en tete, plus d'import ES). Les images
+    # viennent de la prop `assets` des DEUX cotes (preview et app) -- seul
+    # l'import de React/engine differe entre les deux formats.
     try:
         db = to_db_format(jsx_code)
         db["error"] = None
@@ -37,8 +38,8 @@ def download_run(run_id: str):
     css_source, css_error = css_result["css"], css_result["error"]
 
     asset_lines = "\n".join(
-        f"  {a['key']:<16} <- assets/{a['key']}{Path(a['file']).suffix or '.png'}" for a in db["assets"]
-    ) if db["assets"] else "  (aucune image)"
+        f"  {img['key']:<16} <- {img['zip_path']}" for img in images
+    ) if images else "  (aucune image)"
 
     readme = f"""Composant généré par la pipeline Design-to-Code -- run {run_id}, page {state['page']}.
 
@@ -50,8 +51,8 @@ CONTENU
                               tel quel dans css_source.
 - assets/                     les images du template, nommées par leur clé.
 - assets-manifest.json        clé -> fichier, pour l'insertion en base.
-- preview/{component_name}.jsx  la version à imports utilisée par la preview locale
-                              (même rendu, format différent) -- pour référence.
+- preview/{component_name}.jsx  la version avec imports React/engine (esbuild) utilisée
+                              par la preview locale -- mêmes images via `assets`, pour référence.
 
 CLÉS D'IMAGES ATTENDUES DANS assets
 {asset_lines}
