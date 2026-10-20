@@ -116,3 +116,49 @@ npm run dev
 
 Ouvrir <http://localhost:5173>, déposer un PDF ou un DOCX, choisir l'effort de raisonnement, lancer la génération.
 
+## Architecture
+
+```text
+.
+├── backend/cvsmart/          API FastAPI, une app par fonctionnalité
+│   ├── runs/                 création, suivi, annulation des runs PDF → React
+│   ├── jinja/                run DOCX → Jinja
+│   ├── editor/               rendu, édition d'images, édition par chat
+│   ├── download/             export zip
+│   ├── rendering/            rendu HTML/PNG des pages (Playwright)
+│   ├── jsx/                  données d'exemple, format DB, retouches du JSX
+│   ├── pipeline/             orchestration des passes et client modèle
+│   └── shared/               chemins, erreurs communes
+├── frontend/                 React 19 + Vite, éditeur visuel et suivi des runs
+├── pipeline/
+│   ├── prompts/              prompts de chaque passe
+│   ├── src/extraction/       scripts Python d'extraction PDF / DOCX
+│   ├── src/rendering/        bundle esbuild et réduction d'images pour la vision
+│   ├── src/tailwind/         configuration Tailwind des previews et de l'export
+│   └── src/public/           overlay de l'éditeur visuel
+├── templates copy/           moteur de pagination de référence et template d'exemple
+└── exemple-jinja/            exemples de prompts et de configuration Jinja
+```
+
+Chaque app du backend suit la même organisation : `controllers`, `services`, `urls`, avec un fichier par rôle
+(`{feature}_{role}.py`). Les contrôleurs ne contiennent aucune logique métier, les services ne connaissent pas FastAPI.
+
+## Pipeline PDF → React
+
+| Étape | Ce qui se passe |
+| --- | --- |
+| **Extraction** | rasterisation des pages, dictionnaire de style, calque décor sans texte, découpe des images |
+| **Passe 1** | le modèle génère le JSX à partir de la cible, du dictionnaire et de la référence de template |
+| **Passe 2** | il compare son rendu à la cible (grille de repères et carte de différences `pixelmatch`) et se corrige |
+| **Passe 3** | audit de câblage : champs `cvData`, `data-block-id`, clés React |
+| **Correction d'échelle** | algorithmique, sans appel au modèle : compare les tailles du dictionnaire à celles du rendu (ratio médian sur les titres) et recale la police racine |
+| **Correction de tailles** | algorithmique aussi : mesure chaque élément (images et libellés statiques) et ajuste sa taille |
+
+Quelques garde-fous appris sur des cas réels, tous codés dans les prompts ou dans le service de pipeline :
+
+- les images arrivent par la prop `assets`, jamais par un `import`, et chaque clé est vérifiée contre `ASSETS:` ;
+- le conteneur racine garde `max-w-xl`, sinon la police devient trop grande une fois intégré à l'application ;
+- le moteur de pagination ne mesure que le `render()` de chaque élément : le padding d'un encadré doit donc y vivre ;
+- un fragment d'expérience dont l'en-tête et la première puce partagent un fond doit compenser la marge de 2 px du moteur ;
+- une page de couverture avec un habillage différent se gère par un compteur de pages dans `renderPageChrome`.
+
