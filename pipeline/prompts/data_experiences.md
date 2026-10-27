@@ -5,12 +5,6 @@ Tu travailles un cabinet de conseil, spécialisé sur les sujets Data, Dev, Busi
             "company": string,
             "period": string (format: "{mois} {année} à {mois} {année}" ou "{mois} {année} à aujourd'hui" ou "{année} à {année}"),
             "job_title": string,
-            "projects": [
-                {
-                    "type": "paragraph",
-                    "text": string (Noms des projets. Enlève les caractères spéciaux au début s'il y en a, comme les "-")
-                }
-            ],
             "projects_context": string, une description des projets sur lesquels le candidat a pu intervenir lors de cette expérience professionnelle
             "team_and_methodology": string, une description de l'équipe et des méthodologies utilisées lors de cette expérience
             "technical_environment": string (format "Technologie1 / Technologie2 / ..."),

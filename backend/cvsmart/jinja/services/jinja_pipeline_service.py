@@ -9,17 +9,78 @@ from typing import Callable
 import openai
 
 from cvsmart.shared.paths_service import PROJECT_ROOT, NODE_TOOLS_ROOT
+from cvsmart.shared.errors import RunCancelled
+from cvsmart.pipeline.services.model_client_service import PassUsage, RATE
 
-MODEL = "kimi-k3"
+MODEL = "kimi-k3.1-pro"
 MOONSHOT_BASE_URL = "https://api.moonshot.ai/v1"
+EFFORTS = {"low", "high", "max"}
 
 EXAMPLE_ROOT = PROJECT_ROOT / "exemple-jinja"
 PROMPTS_ROOT = NODE_TOOLS_ROOT / "prompts"
 DOCX_TO_TEXT_PY = NODE_TOOLS_ROOT / "src" / "extraction" / "docx_to_text.py"
+DOCX_TO_NUMBERED_TEXT_PY = NODE_TOOLS_ROOT / "src" / "extraction" / "docx_to_numbered_text.py"
 REPLACE_IN_DOCX_PY = NODE_TOOLS_ROOT / "src" / "extraction" / "replace_in_docx.py"
 
 FENCE_RE = re.compile(r"```(?:json)?\n([\s\S]*?)```")
-BLOCKS_RE = re.compile(r"```(?:json|markdown|md)?\n([\s\S]*?)```")
+NUMBERED_LINE_RE = re.compile(r"^\[(\d+)\]", re.MULTILINE)
+
+# data_global.md / data_experiences.md sont les VRAIS prompts d'extraction
+# texte -> JSON de la pipeline CV Smart de production (meme schema que
+# sample_cvdata.json), deja ecrits et eprouves -- mais jamais branches nulle
+# part dans ce repo jusqu'ici. Le placeholder est celui deja utilise dedans.
+DATA_GLOBAL_PROMPT = PROMPTS_ROOT / "data_global.md"
+DATA_EXPERIENCES_PROMPT = PROMPTS_ROOT / "data_experiences.md"
+DATA_EXTRACTION_PLACEHOLDER = "<<IYHA-!hSJ!-l24>>"
+
+PASS1_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "set_paragraphs",
+            "description": (
+                "Remplace le texte d'un ou plusieurs paragraphes du CV cible par du "
+                "contenu Jinja. Chaque paragraphe garde SA PLACE et SA PROPRE mise en "
+                "forme (police, taille, gras...) -- rien n'est fusionne ni supprime. "
+                "replace[i] devient le nouveau texte du paragraphe paragraphs[i], dans "
+                "l'ordre. IMPORTANT : replace peut avoir MOINS d'elements que paragraphs "
+                "-- n'ecris que les textes reellement utiles (dans l'ordre des paragraphes "
+                "concernes), tous les paragraphes RESTANTS de la liste sont vides "
+                "automatiquement. N'ecris JAMAIS toi-meme une longue suite de chaines "
+                "vides '' pour completer : omets-les, le systeme s'en charge. Appelle cet "
+                "outil une fois par groupe de paragraphes identifie -- autant de fois que "
+                "necessaire pour couvrir tout le document."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "paragraphs": {
+                        "type": "array", "items": {"type": "integer"},
+                        "description": "Index des paragraphes concernes (voir le CV numerote), y compris ceux qui seront vides.",
+                    },
+                    "replace": {
+                        "type": "array", "items": {"type": "string"},
+                        "description": "Nouveau texte pour les premiers paragraphes de `paragraphs`, dans le meme ordre. Peut etre plus court que `paragraphs` -- ne liste QUE les textes non vides, n'ajoute pas de '' de remplissage.",
+                    },
+                },
+                "required": ["paragraphs", "replace"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "finish",
+            "description": (
+                "A appeler UNE SEULE FOIS, quand TOUS les paragraphes du CV contenant "
+                "des donnees factices ont ete traites via set_paragraphs -- seuls les "
+                "titres de section fixes doivent rester intouches. N'appelle jamais "
+                "cet outil avant d'avoir parcouru l'integralite du CV numerote."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+]
 
 
 def _python_bin() -> str:
