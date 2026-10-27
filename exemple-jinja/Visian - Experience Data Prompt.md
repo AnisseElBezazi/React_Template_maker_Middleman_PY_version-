@@ -63,6 +63,7 @@ Toutes les informations présentes dans le CV concernant les expériences doiven
 
      * `list-indent-1` doit être précédé d’un `list`
      * `list-indent-2` doit être précédé d’un `list-indent-1`
+   * Si une ligne commence, dans le document source, par un symbole de puce (par exemple •, ‣, ○, ▪, -, *) ou par un numéro de type liste, son `"type"` doit obligatoirement être `"list"` (ou `"list-indent-1"`/`"list-indent-2"` selon son indentation), jamais `"paragraph"`. Ne jamais reclasser une ligne à puce en `"paragraph"` : `"paragraph"` est réservé au texte narratif continu qui ne commence par aucun symbole de puce.
    * Ne pas interpréter le contenu pour deviner l’indentation.
    * Respecter uniquement la structure visible dans le CV.
 
