@@ -239,6 +239,7 @@ Règles :
 
 * Maximum 40 compétences au total.
 * Classées par domaine technique (2 à 3 mots).
+* Un retour à la ligne dû uniquement à la largeur de la colonne dans le CV source n'est pas un séparateur : reconstituer le texte de chaque paragraphe en une seule ligne continue, sans caractère de saut de ligne au milieu, en ne gardant que les séparateurs réellement présents (virgules, barres obliques, etc.).
 
 Format :
 
