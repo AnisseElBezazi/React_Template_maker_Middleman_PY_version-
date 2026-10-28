@@ -1,5 +1,6 @@
 import json
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -94,6 +95,54 @@ def _extract_text(file: Path) -> str:
             raise RuntimeError(f"Extraction docx échouée: {result.stderr}")
         return result.stdout
     return Path(file).read_text(encoding="utf-8")
+
+
+def _extract_numbered_text(file: Path) -> str:
+    """CV cible uniquement : chaque paragraphe est numerote, pour que Kimi
+    reference des index plutot que de devoir recopier du texte caractere
+    pour caractere (fragile -- voir replace_in_docx.py)."""
+    result = subprocess.run(
+        [_python_bin(), str(DOCX_TO_NUMBERED_TEXT_PY), str(file)], capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Extraction docx échouée: {result.stderr}")
+    return result.stdout
+
+
+def _render_preview_pages(docx_path: Path, out_dir: Path, prefix: str) -> int:
+    """Convertit docx_path en PDF (LibreOffice) puis en PNG par page (poppler),
+    enregistres dans out_dir sous `{prefix}-page-1.png`, `{prefix}-page-2.png`...
+    -- pour la preview cote a cote CV original / template Jinja brut (balises
+    visibles, aucun rendu de donnees). Best-effort : si LibreOffice/poppler ne
+    sont pas installes ou echouent, renvoie 0 -- le reste du pipeline (deja
+    termine a ce stade) n'en depend pas."""
+    soffice = shutil.which("soffice")
+    pdftoppm = shutil.which("pdftoppm")
+    if not soffice or not pdftoppm:
+        return 0
+    try:
+        subprocess.run(
+            [soffice, "--headless", "--convert-to", "pdf", "--outdir", str(out_dir), str(docx_path)],
+            capture_output=True, timeout=120,
+        )
+        pdf_path = out_dir / (docx_path.stem + ".pdf")
+        if not pdf_path.exists():
+            return 0
+        raw_prefix = out_dir / f"{prefix}-raw"
+        subprocess.run(
+            [pdftoppm, "-png", "-r", "100", str(pdf_path), str(raw_prefix)],
+            capture_output=True, timeout=120,
+        )
+        # pdftoppm pade le numero de page a la largeur du total (ex: "-01.png"
+        # a "-12.png" des 10 pages) -- on renomme vers un schema SANS padding
+        # pour que le front construise les URLs par simple boucle 1..N.
+        pages = sorted(out_dir.glob(f"{prefix}-raw-*.png"))
+        for i, page_path in enumerate(pages, start=1):
+            page_path.rename(out_dir / f"{prefix}-page-{i}.png")
+        pdf_path.unlink(missing_ok=True)
+        return len(pages)
+    except Exception:
+        return 0
 
 
 def _extract_json(text: str):
