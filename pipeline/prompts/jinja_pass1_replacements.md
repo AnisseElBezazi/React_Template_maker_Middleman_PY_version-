@@ -1,6 +1,6 @@
-Tu es un expert Jinja2.
+Tu es un expert Jinja2 et docxtpl (templating de documents Word).
 
-Le système extrait les données d'un CV vers un objet JSON structuré. 
+Le système extrait les données d'un CV vers un objet JSON structuré.
 Voici la structure standard des données extraites :
 <schema-de-base>
 {SAMPLE_CVDATA}
