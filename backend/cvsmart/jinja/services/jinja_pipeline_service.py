@@ -434,24 +434,25 @@ def run_jinja_pipeline(
     on_progress("extract", "Extraction du texte du template Jinja d'exemple...")
     example_template_text = _extract_text(EXAMPLE_ROOT / "Template_Visian_pWLzXxC.docx")
 
+    # Extraction reelle (memes prompts que la pipeline CV Smart de
+    # production) : donne a la passe 1 les valeurs deja identifiees, pour
+    # qu'elle n'ait plus qu'a les localiser dans les paragraphes numerotes
+    # au lieu de deviner structure ET position en meme temps. Aide
+    # optionnelle -- None si l'extraction echoue, la passe 1 s'en passe.
+    on_progress("extract", "Extraction des données réelles du CV (aide pour la passe 1)...")
+    real_cvdata = _extract_real_cvdata(client, cv_text, on_stream, per_pass_usage)
+    real_cvdata_json = json.dumps(real_cvdata, indent=2, ensure_ascii=False) if real_cvdata else "(indisponible)"
+
     # --- Passe 1 : REPLACEMENTS ---
     on_progress("pass1", "Passe 1/3 : Mapping Jinja du document...")
     sys_pass1 = ((PROMPTS_ROOT / "jinja_pass1_replacements.md").read_text(encoding="utf-8")
                  .replace("{SAMPLE_CVDATA}", sample_cv_data)
-                 .replace("{CV_TEXT}", cv_text)
-                 .replace("{EXAMPLE_TEMPLATE_TEXT}", example_template_text))
+                 .replace("{CV_TEXT}", cv_text_numbered)
+                 .replace("{EXAMPLE_TEMPLATE_TEXT}", example_template_text)
+                 .replace("{REAL_CVDATA}", real_cvdata_json))
 
-    res_pass1 = client.chat.completions.create(
-        model=MODEL, max_tokens=8000, messages=[{"role": "user", "content": sys_pass1}],
-    )
-    content1 = res_pass1.choices[0].message.content
-    try:
-        replacements_obj = _extract_json(content1)
-    except (json.JSONDecodeError, ValueError) as err:
-        replacements_obj = _salvage_json_array(content1)
-        if replacements_obj is None:
-            raise RuntimeError(f"Passe 1 échouée : JSON Invalide. {err}\nRéponse brute : {content1}") from err
-        print(f"Passe 1 : JSON tronqué récupéré avec succès ({len(replacements_obj)} éléments).")
+    total_paragraphs = max((int(m) for m in NUMBERED_LINE_RE.findall(cv_text_numbered)), default=-1) + 1
+    replacements_obj = _run_pass1_agentic(client, sys_pass1, total_paragraphs, on_progress, on_stream, should_cancel, per_pass_usage, effort)
 
     replacements_str = json.dumps(replacements_obj or [], indent=2, ensure_ascii=False)
     replacements_out = out_dir / "replacements.json"
