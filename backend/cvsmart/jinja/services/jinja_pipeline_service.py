@@ -152,27 +152,241 @@ def _extract_json(text: str):
 
 
 def _extract_blocks(text: str) -> list[str]:
-    return [m.strip() for m in BLOCKS_RE.findall(text)]
+    """Extrait les blocs ```markdown de la reponse de la passe 3 (le Global
+    Prompt puis l'Experience Prompt). Ne PAS utiliser une regex non-gourmande
+    generique (```(?:markdown)?\\n([\\s\\S]*?)```) : le prompt genere peut lui-
+    meme contenir des ``` imbriques (exemples de code/JSON illustratifs --
+    l'exemple de reference `Experience Data Prompt.md` en a plusieurs, et
+    Kimi reproduit ce style) -- une regex non-gourmande s'arrete au PREMIER
+    ``` trouve, meme s'il est A L'INTERIEUR du bloc, tronquant silencieusement
+    tout ce qui suit (aucune erreur, juste un fichier incomplet). On decoupe
+    donc sur "```markdown" precisement (jamais utilise pour un exemple
+    imbrique dans un document deja markdown) plutot que sur "```" seul."""
+    matches = list(re.finditer(r"```markdown\s*\n", text))
+    blocks = []
+    for i, m in enumerate(matches):
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        chunk = text[start:end]
+        last_fence = chunk.rfind("```")
+        if last_fence != -1:
+            chunk = chunk[:last_fence]
+        blocks.append(chunk.strip())
+    return blocks
 
 
-def _salvage_json_array(text: str):
-    t = text.strip()
-    fenced = FENCE_RE.search(t)
-    if fenced:
-        t = fenced.group(1).strip()
-    else:
-        t = re.sub(r"^```json\n?", "", t)
-        t = re.sub(r"```$", "", t).strip()
+def _check_finish_reason(step: str, finish_reason: str | None) -> None:
+    # Kimi peut consommer tout max_tokens en reflexion (reasoning) sans qu'il
+    # en reste pour la reponse -- content arrive alors vide, et le JSON.loads
+    # qui suit echoue avec un "Expecting value: line 1 column 1" totalement
+    # opaque. On le detecte ici pour donner un message clair a la place.
+    if finish_reason == "length":
+        raise RuntimeError(
+            f"Passe {step} : reponse coupee au plafond de tokens de sortie "
+            f'(finish_reason="length"). Le modele n\'a pas eu la place d\'ecrire '
+            f"sa reponse apres avoir reflechi -- augmente max_tokens."
+        )
 
-    if t.startswith("["):
-        last_brace = t.rfind("}")
-        if last_brace != -1:
-            salvaged = t[:last_brace + 1] + "]"
+
+def _stream_chat(client, step: str, messages: list[dict], on_stream: Callable[[str, str, str], None],
+                  tools: list[dict] | None = None, effort: str | None = None) -> tuple[str, list[dict], str | None, PassUsage]:
+    """Appel Moonshot en streaming : renvoie (content, tool_calls, finish_reason, usage).
+    tool_calls est une liste de {"id", "function": {"name", "arguments"}}
+    reconstituee a partir des deltas -- l'API les envoie fragment par
+    fragment (nom et arguments arrivent morceau par morceau, indexes par
+    position), meme chose que le texte/la reflexion.
+    usage/cout calcules exactement comme _call_moonshot (model_client_service.py) --
+    meme table de tarifs (RATE), meme traitement du cache (facture selon RATE["cache"],
+    a part du reste de l'entree) -- pour que les deux pipelines restent
+    comparables plutot que de diverger sur deux formules independantes."""
+    kwargs = dict(model=MODEL, messages=messages, stream=True, stream_options={"include_usage": True})
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = "auto"
+    if effort in EFFORTS:
+        kwargs["reasoning_effort"] = effort
+
+    stream = client.chat.completions.create(**kwargs)
+    text_buf, thinking_buf = "", ""
+    tool_calls_acc: dict[int, dict] = {}
+    finish_reason = None
+    usage = None
+
+    for chunk in stream:
+        if chunk.usage:
+            usage = chunk.usage
+        if chunk.choices and chunk.choices[0].finish_reason:
+            finish_reason = chunk.choices[0].finish_reason
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+
+        reasoning = getattr(delta, "reasoning_content", None)
+        if reasoning:
+            thinking_buf += reasoning
+            on_stream(step, "thinking", thinking_buf[-4000:])
+        if delta.content:
+            text_buf += delta.content
+            on_stream(step, "text", text_buf[-4000:])
+        if delta.tool_calls:
+            for tc_delta in delta.tool_calls:
+                entry = tool_calls_acc.setdefault(tc_delta.index, {"id": None, "name": "", "arguments": ""})
+                if tc_delta.id:
+                    entry["id"] = tc_delta.id
+                if tc_delta.function:
+                    if tc_delta.function.name:
+                        entry["name"] += tc_delta.function.name
+                    if tc_delta.function.arguments:
+                        entry["arguments"] += tc_delta.function.arguments
+
+    tool_calls = [
+        {"id": v["id"], "function": {"name": v["name"], "arguments": v["arguments"]}}
+        for _, v in sorted(tool_calls_acc.items())
+    ]
+
+    cached = 0
+    if usage and usage.prompt_tokens_details:
+        cached = usage.prompt_tokens_details.cached_tokens or 0
+    input_tokens = (usage.prompt_tokens if usage else 0) - cached
+    output_tokens = usage.completion_tokens if usage else 0
+    cost = round((input_tokens * RATE["in"] + output_tokens * RATE["out"] + cached * RATE.get("cache", 0.3)) / 1e6, 4)
+    pass_usage = PassUsage(
+        step=step, effort=effort or "", input_tokens=input_tokens, output_tokens=output_tokens,
+        cache_read_tokens=cached, cache_write_tokens=0, cost_usd=cost,
+    )
+
+    return text_buf, tool_calls, finish_reason, pass_usage
+
+
+def _extract_real_cvdata(client, cv_text: str, on_stream: Callable[[str, str, str], None],
+                          per_pass_usage: list[PassUsage]) -> dict | None:
+    """Fait tourner les VRAIS prompts d'extraction de la pipeline CV Smart
+    (texte -> JSON structure standard) sur le CV cible, pour donner a la
+    passe 1 des valeurs deja identifiees plutot que de lui faire deviner
+    la structure ET la position des paragraphes en meme temps. Ces deux
+    prompts sont deja ecrits et eprouves ; on ne fait que les brancher.
+    Aide optionnelle : si l'extraction echoue, la passe 1 continue sans,
+    exactement comme avant."""
+    result: dict = {}
+    for step, prompt_path in (("extract_data", DATA_GLOBAL_PROMPT), ("extract_data", DATA_EXPERIENCES_PROMPT)):
+        try:
+            prompt = prompt_path.read_text(encoding="utf-8").replace(DATA_EXTRACTION_PLACEHOLDER, cv_text)
+            # effort "low" : cette extraction ne fait que suivre un schema JSON
+            # fixe sur du texte deja present dans le CV -- aucun raisonnement
+            # profond requis, contrairement a la passe 1 qui doit elle
+            # localiser precisement chaque valeur dans les paragraphes numerotes.
+            content, _, finish_reason, usage = _stream_chat(client, step, [{"role": "user", "content": prompt}], on_stream, effort="low")
+            per_pass_usage.append(usage)
+            if finish_reason == "length":
+                continue
+            parsed = _extract_json(content)
+            if isinstance(parsed, dict):
+                result.update(parsed)
+        except Exception:
+            # Aide optionnelle -- une extraction ratee ne doit jamais faire
+            # echouer tout le run, la passe 1 sait deja travailler sans.
+            continue
+    return result or None
+
+
+def _run_pass1_agentic(client, sys_pass1: str, total_paragraphs: int,
+                        on_progress: Callable[[str, str], None], on_stream: Callable[[str, str, str], None],
+                        should_cancel: Callable[[], bool], per_pass_usage: list[PassUsage],
+                        effort: str = "high") -> list[dict]:
+    """Passe 1, en boucle d'outils plutot qu'en un seul appel qui devine tout
+    d'un coup. Kimi appelle set_paragraphs autant de fois que necessaire (un
+    ou plusieurs par tour), et voit apres chaque appel combien de paragraphes
+    restent a traiter -- il peut alors reprendre le travail au lieu de
+    s'arreter tot en ayant couvert seulement les cas faciles. Aucune analyse
+    de JSON en texte libre necessaire : les arguments d'un tool call sont
+    deja structures par l'API."""
+    messages = [{"role": "user", "content": sys_pass1}]
+    edits: list[dict] = []
+    covered: set[int] = set()
+    max_iterations = 60
+
+    for iteration in range(max_iterations):
+        if should_cancel():
+            raise RunCancelled("Run annulé par l'utilisateur.")
+        on_progress("pass1", f"Passe 1/3 : mapping Jinja -- {len(covered)}/{total_paragraphs} paragraphes couverts (tour {iteration + 1})...")
+
+        content, tool_calls, finish_reason, usage = _stream_chat(client, "pass1", messages, on_stream, tools=PASS1_TOOLS, effort=effort)
+        per_pass_usage.append(usage)
+        _check_finish_reason("1", finish_reason)
+
+        messages.append({
+            "role": "assistant",
+            "content": content or None,
+            "tool_calls": [
+                {"id": tc["id"], "type": "function",
+                 "function": {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]}}
+                for tc in tool_calls
+            ] or None,
+        })
+
+        if not tool_calls:
+            # Pas d'appel d'outil : le modele considere avoir fini sans
+            # passer par finish(). On s'arrete quand meme plutot que de
+            # boucler indefiniment sur un modele qui ne joue pas le jeu.
+            break
+
+        finished = False
+        for call in tool_calls:
             try:
-                return json.loads(salvaged)
+                args = json.loads(call["function"]["arguments"] or "{}")
             except json.JSONDecodeError:
-                return None
-    return None
+                args = {}
+
+            name = call["function"]["name"]
+            if name == "finish":
+                finished = True
+                tool_result = "Termine."
+            elif name == "set_paragraphs":
+                raw_idxs = args.get("paragraphs", [])
+                raw_replaces = args.get("replace", [])
+                if isinstance(raw_replaces, str):
+                    # Sur les gros groupes (des dizaines de paragraphes,
+                    # souvent surtout des chaines vides), Kimi degenere
+                    # parfois et renvoie tout le tableau encode une fois de
+                    # trop, sous forme de texte litteral ('["a", "", ...]').
+                    # On tente de le redecoder plutot que de recopier cette
+                    # chaine telle quelle sur chaque paragraphe du groupe.
+                    try:
+                        decoded = json.loads(raw_replaces)
+                        if isinstance(decoded, list):
+                            raw_replaces = decoded
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                if not isinstance(raw_replaces, list):
+                    raw_replaces = [raw_replaces]
+
+                if len(raw_replaces) > len(raw_idxs):
+                    tool_result = (
+                        f"Erreur : replace a {len(raw_replaces)} element(s) pour seulement "
+                        f"{len(raw_idxs)} paragraphs -- replace ne peut pas etre plus long. Reessaie."
+                    )
+                else:
+                    # replace peut etre plus court que paragraphs : les
+                    # paragraphes au-dela sont vides automatiquement (plus
+                    # besoin d'ecrire des dizaines de "" a la main).
+                    idxs, texts = [], []
+                    for i, idx in enumerate(raw_idxs):
+                        if isinstance(idx, int) and 0 <= idx < total_paragraphs:
+                            idxs.append(idx)
+                            texts.append(raw_replaces[i] if i < len(raw_replaces) else "")
+                    if idxs:
+                        edits.append({"paragraphs": idxs, "replace": texts})
+                        covered.update(idxs)
+                    tool_result = f"Enregistre. {len(covered)}/{total_paragraphs} paragraphes couverts au total."
+            else:
+                tool_result = f"Outil inconnu : {name}"
+
+            messages.append({"role": "tool", "tool_call_id": call["id"], "content": tool_result})
+
+        if finished:
+            break
+
+    return edits
 
 
 @dataclass
@@ -181,6 +395,13 @@ class JinjaPipelineResult:
     global_prompt_path: Path
     experience_prompt_path: Path
     config_path: Path
+    per_pass_usage: list[PassUsage]
+    total_input_tokens: int
+    total_output_tokens: int
+    total_cache_read_tokens: int
+    cost_usd: float
+    source_page_count: int
+    template_page_count: int
 
 
 def run_jinja_pipeline(
@@ -188,6 +409,9 @@ def run_jinja_pipeline(
     out_dir: Path,
     api_key: str,
     on_progress: Callable[[str, str], None] = lambda step, message: None,
+    on_stream: Callable[[str, str, str], None] = lambda step, kind, text: None,
+    should_cancel: Callable[[], bool] = lambda: False,
+    effort: str = "high",
 ) -> JinjaPipelineResult:
     """Pipeline INVERSE de la pipeline principale : part d'un .docx de CV
     REMPLI (donnees factices) et en derive le template Jinja non rempli, sa
