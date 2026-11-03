@@ -466,16 +466,13 @@ def run_jinja_pipeline(
                  .replace("{CV_TEXT}", cv_text)
                  .replace("{REPLACEMENTS}", replacements_str))
 
-    # max_tokens manquait ici (present sur les passes 1 et 3) alors que
-    # l'extra_config est le plus gros JSON des 3 sorties -- le plus expose a
-    # une troncature silencieuse sur le defaut de l'API.
-    res_pass2 = client.chat.completions.create(
-        model=MODEL, max_tokens=8000, messages=[{"role": "user", "content": sys_pass2}],
-    )
+    content2, _, finish_reason2, usage2 = _stream_chat(client, "pass2", [{"role": "user", "content": sys_pass2}], on_stream, effort=effort)
+    per_pass_usage.append(usage2)
+    _check_finish_reason("2", finish_reason2)
     try:
-        extra_config_obj = _extract_json(res_pass2.choices[0].message.content)
+        extra_config_obj = _extract_json(content2)
     except (json.JSONDecodeError, ValueError) as err:
-        raise RuntimeError(f"Passe 2 échouée : JSON Invalide. {err}") from err
+        raise RuntimeError(f"Passe 2 échouée : JSON Invalide. {err}\nRéponse brute : {content2}") from err
 
     extra_config_str = json.dumps(extra_config_obj, indent=2, ensure_ascii=False)
     config_out = out_dir / "extra_config.json"
@@ -490,10 +487,10 @@ def run_jinja_pipeline(
                  .replace("{EXTRA_CONFIG}", extra_config_str)
                  .replace("{CV_TEXT}", cv_text))
 
-    res_pass3 = client.chat.completions.create(
-        model=MODEL, max_tokens=8000, messages=[{"role": "user", "content": sys_pass3}],
-    )
-    blocks_pass3 = _extract_blocks(res_pass3.choices[0].message.content)
+    content3, _, finish_reason3, usage3 = _stream_chat(client, "pass3", [{"role": "user", "content": sys_pass3}], on_stream, effort=effort)
+    per_pass_usage.append(usage3)
+    _check_finish_reason("3", finish_reason3)
+    blocks_pass3 = _extract_blocks(content3)
     if len(blocks_pass3) < 2:
         raise RuntimeError("Passe 3 échouée : Prompts manquants.")
     global_prompt_text, exp_prompt_text = blocks_pass3[0], blocks_pass3[1]
