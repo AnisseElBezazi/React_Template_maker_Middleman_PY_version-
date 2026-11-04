@@ -500,6 +500,35 @@ def run_jinja_pipeline(
     global_prompt_out.write_text(global_prompt_text or "", encoding="utf-8")
     exp_prompt_out.write_text(exp_prompt_text or "", encoding="utf-8")
 
+    # --- Passe 4 : VERIFICATION DES BALISES FERMANTES (rapide, effort bas) ---
+    # Dernier filet AVANT le rendu : verifie UNIQUEMENT que chaque {%p/tr
+    # if/for%} ferme dans la meme famille et le meme conteneur (voir
+    # jinja_pass4_verify.md) -- exactement la classe de bug deja detectee et
+    # partiellement corrigee cote code (_fix_flavor_mismatches,
+    # _fix_stranded_markers). Aide optionnelle et volontairement etroite : si
+    # la reponse est invalide/inexploitable, on continue avec les
+    # remplacements de la passe 1 tels quels plutot que de faire echouer tout
+    # le run pour une simple relecture ratee.
+    on_progress("pass4", "Passe 4 : vérification des balises fermantes...")
+    sys_pass4 = ((PROMPTS_ROOT / "jinja_pass4_verify.md").read_text(encoding="utf-8")
+                 .replace("{CV_TEXT}", cv_text_numbered)
+                 .replace("{REPLACEMENTS}", replacements_str))
+    try:
+        content4, _, finish_reason4, usage4 = _stream_chat(
+            client, "pass4", [{"role": "user", "content": sys_pass4}], on_stream, effort="low",
+        )
+        per_pass_usage.append(usage4)
+        if finish_reason4 != "length":
+            verified = _extract_json(content4)
+            if isinstance(verified, list):
+                replacements_obj = verified
+                replacements_str = json.dumps(replacements_obj, indent=2, ensure_ascii=False)
+                replacements_out.write_text(replacements_str, encoding="utf-8")
+    except Exception:
+        # Verification optionnelle -- une passe 4 ratee ne doit jamais faire
+        # echouer tout le run, le rendu continue avec la passe 1 telle quelle.
+        pass
+
     # 5. Modification du .docx
     on_progress("render", "Génération finale du template .docx...")
     template_out_path = out_dir / "template.docx"
