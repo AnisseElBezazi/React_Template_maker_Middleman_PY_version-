@@ -15,7 +15,9 @@ export const JINJA_STAGES = [
   { id: "pass1", name: "Passe 1", note: "Mapping Jinja (Remplacements)" },
   { id: "pass2", name: "Passe 2", note: "Configuration (Extra Config)" },
   { id: "pass3", name: "Passe 3", note: "Prompts d'extraction" },
+  { id: "pass4", name: "Passe 4", note: "Vérification des balises fermantes" },
   { id: "render", name: "Génération", note: "Génération du .docx" },
+  { id: "preview", name: "Prévisualisation", note: "Conversion en images pour comparaison" },
 ];
 
 export function stageIndex(step, stages = STAGES) {
