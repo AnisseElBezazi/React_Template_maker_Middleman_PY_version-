@@ -38,6 +38,12 @@ async def create_jinja_run(cv: UploadFile = File(...)):
         state["message"] = message
         state["log"].append({"step": step, "message": message})
 
+    def on_stream(step, kind, text):
+        state["stream"] = {"step": step, "kind": kind, "text": text}
+
+    def should_cancel():
+        return state.get("cancel_requested", False)
+
     api_key = os.environ.get("MOONSHOT_API_KEY") or os.environ.get("OPENAI_API_KEY")
 
     import threading

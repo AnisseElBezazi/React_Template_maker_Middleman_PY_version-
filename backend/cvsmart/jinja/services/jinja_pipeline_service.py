@@ -420,11 +420,27 @@ def run_jinja_pipeline(
     if not api_key:
         raise RuntimeError("Clé API Moonshot manquante.")
 
+    # Les 3 appels ne sont pas en streaming : impossible d'interrompre en
+    # plein appel comme sur la pipeline principale. On verifie donc a chaque
+    # etape franchie (on_progress), ce qui suffit a arreter avant la
+    # prochaine passe payante.
+    _inner_on_progress = on_progress
+
+    def on_progress(step: str, message: str) -> None:
+        if should_cancel():
+            raise RunCancelled("Run annulé par l'utilisateur.")
+        _inner_on_progress(step, message)
+
     client = openai.OpenAI(api_key=api_key, base_url=MOONSHOT_BASE_URL)
+    per_pass_usage: list[PassUsage] = []
 
     # 1. Extraction de texte du docx modèle
     on_progress("extract", "Extraction du texte du modèle de CV...")
     cv_text = _extract_text(cv_path)
+    # Version numerotee : seule la passe 1 (qui doit reperer PRECISEMENT
+    # quels paragraphes remplacer) en a besoin. Les passes 2/3 n'y touchent
+    # jamais et n'ont pas a payer le surcout de tokens des index affiches.
+    cv_text_numbered = _extract_numbered_text(cv_path)
 
     example_config_text = (EXAMPLE_ROOT / "extra-config-visian.json").read_text(encoding="utf-8")
     example_global = (EXAMPLE_ROOT / "Visian - Global Data Prompt.md").read_text(encoding="utf-8")
