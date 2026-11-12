@@ -7,8 +7,9 @@ async function request(url, options) {
   return response.json();
 }
 
-export function createJinjaRun(cv) {
+export function createJinjaRun(cv, effort = "high") {
   const form = new FormData();
   form.append("cv", cv);
+  form.append("effort", effort);
   return request("/api/jinja-runs", { method: "POST", body: form });
 }

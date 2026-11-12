@@ -14,6 +14,7 @@ export default function JinjaPage() {
   const [drag, setDrag] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [effort, setEffort] = useState("high");
   const inputRef = useRef(null);
 
   async function handleSubmit(event) {
@@ -22,7 +23,7 @@ export default function JinjaPage() {
     setBusy(true);
     setError(null);
     try {
-      const { run_id } = await createJinjaRun(cv);
+      const { run_id } = await createJinjaRun(cv, effort);
       window.location.href = `/runs/${run_id}`;
     } catch (err) {
       setError(err.message);
@@ -69,6 +70,17 @@ export default function JinjaPage() {
                 Fournissez un CV au format .docx rempli avec des données factices. Le système générera le
                 template Jinja correspondant, les 2 prompts et l'extra-config.
               </p>
+
+              <div className="field-row" style={{ marginTop: 16 }}>
+                <label htmlFor="effortInput">Raisonnement
+                  <span className="hint">S'applique aux 3 passes. Plus haut = meilleure analyse, mais le raisonnement est facturé comme de la sortie.</span>
+                </label>
+                <select className="num" id="effortInput" value={effort} onChange={(e) => setEffort(e.target.value)}>
+                  <option value="low">low — rapide</option>
+                  <option value="high">high — par défaut</option>
+                  <option value="max">max — template complexe</option>
+                </select>
+              </div>
             </div>
 
             {error && <p className="error-msg">{error}</p>}

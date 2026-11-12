@@ -3,16 +3,18 @@ import time
 import uuid
 from pathlib import Path
 
-from fastapi import HTTPException, UploadFile, File
+from fastapi import Form, HTTPException, UploadFile, File
 
 from cvsmart.shared.paths_service import OUT_ROOT, UPLOADS_ROOT, ensure_roots
-from cvsmart.runs.services.runs_service import register_run
+from cvsmart.shared.errors import RunCancelled
+from cvsmart.runs.services.runs_service import register_run, clean_source_name
 from cvsmart.jinja.services.jinja_pipeline_service import run_jinja_pipeline
 
 
-async def create_jinja_run(cv: UploadFile = File(...)):
+async def create_jinja_run(cv: UploadFile = File(...), effort: str = Form("high")):
     if not cv:
         raise HTTPException(status_code=400, detail="Fichier manquant.")
+    effort_value = effort if effort in ("low", "high", "max") else "high"
 
     ensure_roots()
     # Ce endpoint n'accepte qu'un CV .docx (cote Node, le champ "cv" force
