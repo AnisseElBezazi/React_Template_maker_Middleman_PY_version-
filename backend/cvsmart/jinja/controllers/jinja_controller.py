@@ -23,6 +23,7 @@ async def create_jinja_run(cv: UploadFile = File(...), effort: str = Form("high"
     cv_path = UPLOADS_ROOT / f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}.docx"
     cv_path.write_bytes(await cv.read())
     pdf_url = "/uploads/" + cv_path.name
+    source_name = clean_source_name(cv.filename)
 
     run_id = f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:5]}"
     out_dir = OUT_ROOT / run_id
@@ -32,6 +33,7 @@ async def create_jinja_run(cv: UploadFile = File(...), effort: str = Form("high"
         "run_id": run_id, "status": "running", "step": "extract", "message": "Démarrage...",
         "log": [], "stream": {"step": None, "kind": None, "text": ""},
         "result": None, "error": None, "pdf_url": pdf_url, "page": 1, "type": "jinja",
+        "cancel_requested": False, "source_name": source_name, "effort": effort_value,
     }
     register_run(run_id, state)
 
