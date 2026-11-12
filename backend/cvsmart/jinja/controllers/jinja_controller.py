@@ -57,21 +57,43 @@ async def create_jinja_run(cv: UploadFile = File(...), effort: str = Form("high"
         try:
             if not api_key:
                 raise RuntimeError("Clé API Moonshot manquante.")
-            result = run_jinja_pipeline(cv_path=cv_path, out_dir=out_dir, api_key=api_key, on_progress=on_progress)
+            result = run_jinja_pipeline(
+                cv_path=cv_path, out_dir=out_dir, api_key=api_key,
+                on_progress=on_progress, on_stream=on_stream, should_cancel=should_cancel,
+                effort=effort_value,
+            )
+            per_pass_meta = [{
+                "step": p.step, "effort": p.effort, "inputTokens": p.input_tokens, "outputTokens": p.output_tokens,
+                "cacheReadTokens": p.cache_read_tokens, "cacheWriteTokens": p.cache_write_tokens, "costUsd": p.cost_usd,
+            } for p in result.per_pass_usage]
             (out_dir / "run-meta.json").write_text(_json.dumps({
-                "type": "jinja", "pdfUrl": pdf_url,
+                "type": "jinja", "pdfUrl": pdf_url, "sourceName": source_name, "effort": effort_value,
                 "finishedAt": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+                "tokens": {
+                    "totalInputTokens": result.total_input_tokens, "totalOutputTokens": result.total_output_tokens,
+                    "totalCacheReadTokens": result.total_cache_read_tokens,
+                },
+                "perPass": per_pass_meta, "costUsd": result.cost_usd,
+                "sourcePageCount": result.source_page_count, "templatePageCount": result.template_page_count,
             }, indent=2), encoding="utf-8")
             state.update({
                 "status": "done", "step": "done", "message": "Terminé.",
+                "cost_usd": result.cost_usd,
                 "result": {
                     "out_dir": str(out_dir),
                     "template_url": f"/out/{run_id}/template.docx",
                     "global_prompt_url": f"/out/{run_id}/global_prompt.md",
                     "experience_prompt_url": f"/out/{run_id}/experience_prompt.md",
                     "config_url": f"/out/{run_id}/extra_config.json",
+                    "total_input_tokens": result.total_input_tokens, "total_output_tokens": result.total_output_tokens,
+                    "total_cache_read_tokens": result.total_cache_read_tokens,
+                    "source_page_count": result.source_page_count, "template_page_count": result.template_page_count,
                 },
             })
+        except RunCancelled:
+            state["status"] = "cancelled"
+            state["step"] = "cancelled"
+            state["message"] = "Annulé."
         except Exception as err:
             state["status"] = "error"
             state["step"] = "error"
