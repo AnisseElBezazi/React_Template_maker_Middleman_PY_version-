@@ -555,8 +555,21 @@ def run_jinja_pipeline(
     if render_result.returncode != 0:
         raise RuntimeError(f"Erreur génération docx: {render_result.stderr or render_result.stdout}")
 
+    # 6. Preview cote a cote (CV original vs template Jinja brut, balises
+    # visibles) -- best-effort, ne fait jamais echouer le run si LibreOffice
+    # est absent ou plante : le run est deja fonctionnellement termine.
+    on_progress("preview", "Génération de la prévisualisation...")
+    source_page_count = _render_preview_pages(cv_path, out_dir, "source")
+    template_page_count = _render_preview_pages(template_out_path, out_dir, "template")
+
     on_progress("done", "Terminé")
     return JinjaPipelineResult(
         template_path=template_out_path, global_prompt_path=global_prompt_out,
         experience_prompt_path=exp_prompt_out, config_path=config_out,
+        per_pass_usage=per_pass_usage,
+        total_input_tokens=sum(p.input_tokens for p in per_pass_usage),
+        total_output_tokens=sum(p.output_tokens for p in per_pass_usage),
+        total_cache_read_tokens=sum(p.cache_read_tokens for p in per_pass_usage),
+        cost_usd=round(sum(p.cost_usd for p in per_pass_usage), 4),
+        source_page_count=source_page_count, template_page_count=template_page_count,
     )
