@@ -177,13 +177,20 @@ def _rehydrate_run(run_id: str) -> dict[str, Any] | None:
         return {
             "run_id": run_id, "status": "done", "step": "done",
             "message": "Rechargé depuis le disque.", "log": [], "error": None,
-            "restored": True, "type": "jinja", "pdf_url": pdf_url,
+            "restored": True, "type": "jinja", "pdf_url": pdf_url, "effort": meta.get("effort"),
+            "cost_usd": meta.get("costUsd"),
             "result": {
                 "out_dir": str(out_dir),
                 "template_url": to_public_url(out_dir / "template.docx"),
                 "global_prompt_url": to_public_url(out_dir / "global_prompt.md"),
                 "experience_prompt_url": to_public_url(out_dir / "experience_prompt.md"),
                 "config_url": to_public_url(out_dir / "extra_config.json"),
+                **({"total_input_tokens": meta["tokens"].get("totalInputTokens"),
+                    "total_output_tokens": meta["tokens"].get("totalOutputTokens"),
+                    "total_cache_read_tokens": meta["tokens"].get("totalCacheReadTokens")}
+                   if "tokens" in meta else {}),
+                "source_page_count": meta.get("sourcePageCount", 0),
+                "template_page_count": meta.get("templatePageCount", 0),
             },
         }
 
