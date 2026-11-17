@@ -40,6 +40,13 @@ export default function JinjaDoneView({ result, effort, runId }) {
           <a className="btn ghost" href={result.config_url} download><IconDownload /><span>Extra Config (.json)</span></a>
         </div>
       </div>
+
+      {hasPreview && (
+        <div style={{ display: "flex", gap: 24, flex: 1, minHeight: 0 }}>
+          <PreviewColumn title="CV original" pageCount={result.source_page_count} urlPrefix={`${outPrefix}/source`} />
+          <PreviewColumn title="Template Jinja (balises brutes)" pageCount={result.template_page_count} urlPrefix={`${outPrefix}/template`} />
+        </div>
+      )}
     </div></main>
   );
 }
