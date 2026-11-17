@@ -59,27 +59,91 @@ def _run_time(dir_name: str) -> float:
         return 0
 
 
-def _past_run_ids(limit: int = 14) -> list[str]:
+def _disk_run_ids() -> set[str]:
     if not OUT_ROOT.exists():
-        return []
+        return set()
     # Le Node d'origine cherche "attempt1.jsx" OU "result.docx" -- mais la
     # pipeline jinja n'a jamais ecrit result.docx (voir _rehydrate_run), donc
     # ses runs etaient invisibles dans le rail "Runs" des le rechargement.
     # On reconnait ici le vrai fichier ecrit : template.docx.
-    dirs = [d.name for d in OUT_ROOT.iterdir()
-            if (d / "attempt1.jsx").exists() or (d / "template.docx").exists()]
-    dirs.sort(key=_run_time, reverse=True)
-    return dirs[:limit]
+    # `replacements.json` (sortie de la passe 1 agentique, avant l'ecriture
+    # du docx) compte aussi : un run jinja qui plante APRES avoir deja
+    # consomme des tokens payants (passe 1 faite) mais AVANT template.docx
+    # disparaissait sans laisser de trace des le redemarrage du serveur --
+    # aucun moyen de savoir qu'il avait meme existe.
+    return {d.name for d in OUT_ROOT.iterdir()
+            if (d / "attempt1.jsx").exists() or (d / "template.docx").exists()
+            or (d / "replacements.json").exists()}
 
 
-def list_runs(limit: int = 14) -> list[dict[str, Any]]:
-    """Historique pret a afficher. Dates en ISO 8601 : c'est le front qui
-    decide du format lisible, pas le backend."""
+PIPELINE_LABELS = {"jsx": "React", "jinja": "Jinja"}
+
+
+def clean_source_name(filename: str | None) -> str | None:
+    """Nom de fichier televerse, sans extension -- sert d'identifiant humain
+    pour un run (ex: "Lojelis.pdf" -> "Lojelis") a la place du run_id brut."""
+    if not filename:
+        return None
+    stem = Path(filename).stem.strip()
+    return stem or None
+
+
+def _label_from(source_name: str | None, run_type: str) -> str | None:
+    if not source_name:
+        return None
+    return f"{source_name} · {PIPELINE_LABELS.get(run_type, 'React')}"
+
+
+def _disk_meta(run_id: str) -> dict[str, Any]:
+    meta_file = OUT_ROOT / run_id / "run-meta.json"
+    if not meta_file.exists():
+        return {}
+    try:
+        return json.loads(meta_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+
+def _disk_status(run_id: str, run_type: str) -> str:
+    """Un run disque-seulement (pas en memoire) a forcement fini son cycle de
+    vie -- mais "fini" n'egale pas "reussi" : depuis que `_disk_run_ids`
+    reconnait aussi un jinja arrete a `replacements.json` (passe 1 faite,
+    tokens payes, mais jamais de docx ecrit), un tel run doit remonter en
+    erreur, pas en "done" -- sinon il a l'air termine avec succes alors qu'il
+    n'a jamais produit son resultat final."""
+    out_dir = OUT_ROOT / run_id
+    if run_type == "jinja":
+        return "done" if (out_dir / "template.docx").exists() else "error"
+    return "done" if (out_dir / "final.jsx").exists() else "error"
+
+
+def list_runs(limit: int = 500) -> list[dict[str, Any]]:
+    """Historique ET runs en cours, prets a afficher. Un run encore en
+    memoire prime sur sa version disque -- lui seul connait son statut EN
+    DIRECT (running/done/error/cancelled) ; un run disque-seulement a
+    forcement fini son cycle de vie, mais pas forcement avec succes (voir
+    `_disk_status`).
+
+    Le tri se fait AVANT d'aller chercher le detail de chaque run (lecture +
+    parsing de run-meta.json) : sur un dossier out/ qui accumule des
+    centaines de runs, lire les metadonnees de tout le monde pour n'en
+    garder que `limit` a la fin serait pure perte."""
+    ids = sorted(_disk_run_ids() | set(_runs.keys()), key=_run_time, reverse=True)[:limit]
+
     out = []
-    for run_id in _past_run_ids(limit):
+    for run_id in ids:
         ms = _run_time(run_id)
         started_at = datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat() if ms else None
-        out.append({"run_id": run_id, "started_at": started_at})
+        live = _runs.get(run_id)
+        if live is not None:
+            status = live.get("status", "running")
+            label = _label_from(live.get("source_name"), live.get("type", "jsx"))
+        else:
+            meta = _disk_meta(run_id)
+            run_type = meta.get("type", "jsx")
+            status = _disk_status(run_id, run_type)
+            label = _label_from(meta.get("sourceName"), run_type)
+        out.append({"run_id": run_id, "started_at": started_at, "status": status, "label": label})
     return out
 
 
