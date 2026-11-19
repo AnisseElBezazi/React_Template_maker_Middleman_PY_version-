@@ -162,3 +162,45 @@ Quelques garde-fous appris sur des cas réels, tous codés dans les prompts ou d
 - un fragment d'expérience dont l'en-tête et la première puce partagent un fond doit compenser la marge de 2 px du moteur ;
 - une page de couverture avec un habillage différent se gère par un compteur de pages dans `renderPageChrome`.
 
+## Pipeline DOCX → Jinja
+
+Un template Word est transformé en template `docxtpl` à partir d'un CV exemple rempli :
+
+1. **Extraction** : le texte du DOCX est numéroté paragraphe par paragraphe, les données du CV sont extraites avec les prompts de production.
+2. **Passe 1, remplacements** : le modèle appelle l'outil `set_paragraphs` pour indiquer, par index, quels paragraphes deviennent des variables, des boucles ou des conditions. Le texte n'est jamais recopié, ce qui évite les hallucinations.
+3. **Passe 2, configuration** : génération de la configuration extra (champs affichés, regroupements).
+4. **Passe 3, prompts** : génération des prompts d'extraction globaux et par expérience, limités aux champs réellement utilisés.
+5. **Passe 4, vérification** : contrôle que chaque balise `{%p … %}` ou `{%tr … %}` ferme dans le même conteneur.
+6. **Prévisualisation** : rendu côte à côte du CV d'origine et du template Jinja brut, via LibreOffice.
+
+## Éditeur visuel et chat
+
+Le rendu final s'ouvre dans un éditeur : sélection d'un texte ou d'une image, déplacement, redimensionnement,
+réglages en `em`. Les retouches sont réécrites dans le JSX puis re-rendues.
+
+Le panneau de **chat** permet de demander une modification en français (« passe les titres en vert », « centre l'en-tête
+d'expérience »). Le modèle reçoit le JSX actuel et le schéma `cvData` du template, et ne modifie que ce qui est demandé.
+
+## API
+
+| Méthode | Route | Rôle |
+| --- | --- | --- |
+| `GET` | `/api/runs` | liste des runs |
+| `POST` | `/api/runs` | lance un run PDF → React (PDF ou DOCX) |
+| `GET` | `/api/runs/{id}` | détail d'un run |
+| `GET` | `/api/runs/{id}/status` | statut, étape, flux du modèle |
+| `POST` | `/api/runs/{id}/cancel` | annule un run en cours |
+| `POST` | `/api/runs/{id}/rerender` | re-rend le JSX |
+| `POST` | `/api/runs/{id}/image-edits` | applique les retouches de l'éditeur visuel |
+| `POST` | `/api/runs/{id}/chat` | modification en langage naturel |
+| `GET` | `/api/runs/{id}/download` | export zip |
+| `POST` | `/api/jinja-runs` | lance un run DOCX → Jinja |
+
+La documentation interactive est disponible sur <http://localhost:8100/docs>.
+
+## Conventions
+
+- Une app par fonctionnalité dans le backend, un seul rôle par fichier, jamais de logique dans l'affichage.
+- Un élément affiché plusieurs fois devient un composant React dédié.
+- Les diffs restent minimaux : un commit, un sujet.
+- Les secrets (`.env`) et les sorties de la pipeline (`pipeline/out/`) ne sont jamais versionnés.
