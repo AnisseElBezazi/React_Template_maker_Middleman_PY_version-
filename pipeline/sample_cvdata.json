@@ -20,6 +20,10 @@
     { "name": "Langages", "content": [{ "type": "list", "text": "Python" }, { "type": "list", "text": "SQL" }, { "type": "list", "text": "JavaScript" }] },
     { "name": "Cloud", "content": [{ "type": "list", "text": "Azure" }, { "type": "list", "text": "AWS" }] }
   ],
+  "tools": [
+    { "name": "Data & BI", "content": [{ "type": "list", "text": "Power BI" }, { "type": "list", "text": "Tableau" }] },
+    { "name": "Collaboration", "content": [{ "type": "list", "text": "Jira" }, { "type": "list", "text": "Confluence" }, { "type": "list", "text": "Git" }] }
+  ],
   "functional_skills": [
     { "name": "Gestion de projet", "content": [{ "type": "list", "text": "Pilotage d'équipe" }, { "type": "list", "text": "Méthodologie Agile" }] }
   ],
