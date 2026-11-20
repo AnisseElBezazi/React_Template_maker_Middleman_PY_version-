@@ -34,4 +34,7 @@ export const IconImage = svg(<><rect x="1.75" y="2.75" width="12.5" height="10.5
 // l'execution est celle-ci (grille), pas le rectangle en pointilles.
 export const IconBlock = svg(<path d="M4.75 1.75v12.5M11.25 1.75v12.5M1.75 4.75h12.5M1.75 11.25h12.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />);
 export const IconOnion = svg(<><circle cx="8" cy="8" r="6.1" stroke="currentColor" strokeWidth="1.3" /><path d="M8 1.9a6.1 6.1 0 0 1 0 12.2V1.9Z" fill="currentColor" /></>);
+// Pas de source Node pour celle-ci (fonctionnalite nouvelle, pas un
+// portage) -- dessinee a la main dans le meme style que les autres.
+export const IconChat = svg(<path d="M2.5 3.75a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7.4l-2.9 2.4v-2.4H3.5a1 1 0 0 1-1-1v-6Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />);
 export const IconPdf = svg(<><path d="M9.5 1.75h-5a1 1 0 0 0-1 1v10.5a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V4.25L9.5 1.75Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" /><path d="M9.25 2v2.5h2.75" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" /><path d="M5.75 11.25h4.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></>);
