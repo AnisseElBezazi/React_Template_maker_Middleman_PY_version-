@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from fastapi import Body, HTTPException
@@ -7,6 +8,8 @@ from cvsmart.runs.services.runs_service import get_run
 from cvsmart.jsx.services.image_edits_service import apply_image_edits, apply_text_edits, apply_class_edits
 from cvsmart.shared.paths_service import NODE_TOOLS_ROOT
 from cvsmart.editor.services.editor_service import cv_data_for_run, rerender_final_pass
+from cvsmart.editor.services.chat_edit_service import apply_chat_edit
+from cvsmart.pipeline.services.model_client_service import IS_MOONSHOT
 
 
 def _final_pass_paths(state: dict) -> tuple[Path, Path]:
@@ -66,6 +69,33 @@ def apply_edits(run_id: str, body: dict = Body(...)):
         if result["errors"]:
             raise HTTPException(status_code=500, detail=f"Rendu échoué: {result['errors']}")
         return {"ok": True, "applied": applied}
+    except HTTPException:
+        raise
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+def chat_edit(run_id: str, body: dict = Body(...)):
+    # SYNCHRONE comme apply_edits/rerender_run, meme raison (Playwright).
+    state = get_run(run_id)
+    if not state or state.get("status") != "done":
+        raise HTTPException(status_code=404, detail="Run introuvable ou pas terminé.")
+    message = (body.get("message") or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message vide.")
+
+    api_key = os.environ.get("MOONSHOT_API_KEY") if IS_MOONSHOT else os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Clé API manquante.")
+
+    out_dir = Path(state["result"]["out_dir"])
+    jsx_path, png_path = _final_pass_paths(state)
+    try:
+        result = apply_chat_edit(
+            out_dir, jsx_path, png_path, state["result"]["width"], state["result"]["height"],
+            api_key, message,
+        )
+        return {"ok": True, "cost_usd": result.get("cost_usd"), "audit_findings": result.get("audit_findings", [])}
     except HTTPException:
         raise
     except Exception as err:
