@@ -66,7 +66,7 @@ export default function HomePage() {
     }
   }
 
-  const pdfLabel = pdf ? pdf.name : "Glisse un PDF ici";
+  const pdfLabel = pdf ? pdf.name : "Glisse un PDF ou un DOCX ici";
   const pdfSub = pdf ? `${(pdf.size / 1024 / 1024).toFixed(2)} Mo — prêt` : "ou clique pour en choisir un";
   const submitLabel = busy ? "Démarrage..." : pdf ? "Lancer la génération" : "Choisis d'abord un PDF";
 
@@ -102,7 +102,7 @@ export default function HomePage() {
                     <p className="sub">{pdfSub}</p>
                   </div>
                 </div>
-                <input type="file" accept="application/pdf" id="fileInput" ref={fileInputRef} hidden
+                <input type="file" accept="application/pdf,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" id="fileInput" ref={fileInputRef} hidden
                   onChange={(e) => { if (e.target.files.length) setPdf(e.target.files[0]); }} />
               </div>
 
