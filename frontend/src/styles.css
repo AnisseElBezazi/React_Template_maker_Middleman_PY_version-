@@ -343,12 +343,18 @@
   /* Pastille de zoom : flotte au-dessus du plan de travail, comme les contrôles
      de vue d'un éditeur. */
   /* Barre d'outils flottante : elle porte le mode de travail et le cadrage,
-     les deux choses qu'on change sans arrêt en comparant deux rendus. */
-  .dock {
+     les deux choses qu'on change sans arrêt en comparant deux rendus.
+     .dock-row centre l'ensemble (dock + pastille chat) comme un seul
+     groupe -- .dock lui-meme n'est plus positionne, juste stylise, pour
+     qu'un second element du meme style s'aligne a cote sans calcul manuel. */
+  .dock-row {
     position:absolute; bottom:16px; left:50%; transform:translateX(-50%);
+    display:flex; align-items:center; gap:10px; max-width:calc(100% - 32px); z-index:10;
+  }
+  .dock {
     display:flex; align-items:center; gap:2px; padding:3px;
     background:#fff; border:1px solid var(--line); border-radius:9px;
-    box-shadow:var(--shadow-pop); z-index:10; user-select:none; max-width:calc(100% - 32px);
+    box-shadow:var(--shadow-pop); user-select:none;
   }
   .dock button {
     height:28px; min-width:28px; padding:0 7px; border:none; background:transparent;
