@@ -2,8 +2,10 @@ import json
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile, Form, File
+from fastapi.concurrency import run_in_threadpool
 
 from cvsmart.runs.services import runs_service
+from cvsmart.runs.services.docx_to_pdf_service import convert_docx_to_pdf, is_docx_filename
 from cvsmart.runs.services.run_launch_service import start_run
 from cvsmart.shared.paths_service import UPLOADS_ROOT, ensure_roots
 
@@ -49,7 +51,15 @@ async def create_run(
     extra_config_text: str | None = Form(None),
     has_cover_page: str = Form("false"),
 ):
-    pdf_path = _save_upload(pdf, ".pdf")
+    if is_docx_filename(pdf.filename):
+        docx_path = _save_upload(pdf, ".docx")
+        try:
+            pdf_path = await run_in_threadpool(convert_docx_to_pdf, docx_path)
+        except RuntimeError as err:
+            raise HTTPException(status_code=500, detail=str(err))
+    else:
+        pdf_path = _save_upload(pdf, ".pdf")
+    _ensure_valid_pdf(pdf_path)
     pdf_url = "/uploads/" + pdf_path.name
 
     extra_config_path = None
