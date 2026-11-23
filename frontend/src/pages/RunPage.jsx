@@ -1,5 +1,5 @@
 import { useParams } from "react-router-dom";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Toolbar from "../components/Toolbar";
 import RunsRail from "../components/RunsRail";
 import Board from "../components/Board";
@@ -10,7 +10,8 @@ import JinjaDoneView from "./JinjaDoneView";
 import RunConsole from "../components/RunConsole";
 import RunInfoBox, { KvRow } from "../components/RunInfoBox";
 import PassesList from "../components/PassesList";
-import { IconBack, IconDownload, IconPdf, IconWarn } from "../components/Icons";
+import ChatPanel from "../components/ChatPanel";
+import { IconBack, IconChat, IconClose, IconDownload, IconPdf, IconWarn } from "../components/Icons";
 import { useRun } from "../hooks/useRun";
 import { useRuns } from "../hooks/useRuns";
 import { useViewport } from "../hooks/useViewport";
@@ -96,11 +97,13 @@ function RunningSidebarInfo({ run, runId }) {
 
 function DoneSidebarInfo({ run }) {
   const r = run.result;
+  const isJinja = run.type === "jinja";
   return (
     <RunInfoBox>
-      <KvRow label="Page" value={run.page} />
+      {!isJinja && <KvRow label="Page" value={run.page} />}
       {run.effort && <KvRow label="Raisonnement" value={run.effort} />}
-      <KvRow label="Taille" value={`${r.width}×${r.height}`} />
+      {r.width != null && <KvRow label="Taille" value={`${r.width}×${r.height}`} />}
+      {run.cost_usd != null && <KvRow label="Coût" value={`$${run.cost_usd.toFixed(4)}`} />}
       {r.total_input_tokens != null ? (
         <>
           <KvRow label="Tokens in" value={fmt(r.total_input_tokens)} />
@@ -116,7 +119,7 @@ function DoneSidebarInfo({ run }) {
   );
 }
 
-function DoneView({ run, runId }) {
+function DoneView({ run, runId, chatOpen, onToggleChat }) {
   const r = run.result;
   const worldW = r.width * 2 + BOARD_GAP;
   const frameRef = useRef(null);
@@ -210,11 +213,18 @@ function DoneView({ run, runId }) {
               width={r.width} height={r.preview_height} scrolling="no" onLoad={bindFrameEvents} />
           </Board>
         </div>
-        <Dock tool={editor.tool} onToolChange={editor.setTool}
-          onionOn={editor.onionOn} onionAvailable={!!run.target_url}
-          onOnionToggle={() => editor.setOnion(!editor.onionOn, run.target_url)}
-          zoomPercent={zoomPercent} onZoomIn={() => zoomBy(1.25)} onZoomOut={() => zoomBy(1 / 1.25)}
-          onFit={() => fitAll()} onZoomReset={resetZoom} />
+        <div className="dock-row">
+          <Dock tool={editor.tool} onToolChange={editor.setTool}
+            onionOn={editor.onionOn} onionAvailable={!!run.target_url}
+            onOnionToggle={() => editor.setOnion(!editor.onionOn, run.target_url)}
+            zoomPercent={zoomPercent} onZoomIn={() => zoomBy(1.25)} onZoomOut={() => zoomBy(1 / 1.25)}
+            onFit={() => fitAll()} onZoomReset={resetZoom} />
+          <div className="dock">
+            <button type="button" aria-pressed={chatOpen} title="Modifier par chat" onClick={onToggleChat}>
+              <IconChat />
+            </button>
+          </div>
+        </div>
         <p className="zoomhint">
           <kbd>glisser</kbd> déplacer &nbsp; <kbd>molette</kbd> défiler &nbsp;
           <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>molette</kbd> zoomer &nbsp; <kbd>Espace</kbd>+glisser
@@ -292,7 +302,7 @@ export default function RunPage() {
       <div className="workbench">
         <aside className="rail">
           {run.status === "done" && !isJinja && <PassesList passes={run.result.passes} />}
-          {run.status === "done" && !isJinja && <DoneSidebarInfo run={run} />}
+          {run.status === "done" && <DoneSidebarInfo run={run} />}
           {run.status !== "done" && <RunningSidebarInfo run={run} runId={runId} />}
           <RunsRail runs={runs} currentId={runId} />
         </aside>
