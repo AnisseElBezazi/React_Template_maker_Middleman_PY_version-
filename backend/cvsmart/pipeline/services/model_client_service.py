@@ -13,7 +13,7 @@ from cvsmart.shared.errors import RunCancelled
 # chez l'autre (erreur 401). Les deux configurations connues :
 #   Moonshot (platform.kimi.ai) : "kimi-k3"            + api.moonshot.ai/v1
 #   Baseten                      : "moonshotai/Kimi-K3" + inference.baseten.co/v1
-MODEL = "kimi-k3"
+MODEL = "kimi-k3.1-pro"
 IS_MOONSHOT = "kimi" in MODEL.lower()
 MOONSHOT_BASE_URL = "https://api.moonshot.ai/v1"
 
@@ -23,6 +23,7 @@ PRICING = {
     "claude-opus-5": {"in": 5, "out": 25},
     "claude-sonnet-5": {"in": 3, "out": 15},
     "claude-fable-5": {"in": 10, "out": 50},
+    "kimi-k3.1-pro": {"in": 2, "out": 10, "cache": 0.2},
     "kimi-k3": {"in": 3, "out": 15},
     "moonshotai/Kimi-K3": {"in": 3, "out": 15},
 }
@@ -144,7 +145,7 @@ class ModelClient:
             self.total_output_tokens += r["output_tokens"]
             self.total_cache_read_tokens += r["cache_read"]
             cost = round(
-                (r["input_tokens"] * RATE["in"] + r["output_tokens"] * RATE["out"] + r["cache_read"] * 0.3) / 1e6, 4
+                (r["input_tokens"] * RATE["in"] + r["output_tokens"] * RATE["out"] + r["cache_read"] * RATE.get("cache", 0.3)) / 1e6, 4
             )
             self.per_pass_usage.append(PassUsage(
                 step=step, effort=effort, input_tokens=r["input_tokens"], output_tokens=r["output_tokens"],
@@ -163,7 +164,7 @@ class ModelClient:
                 )
             return r["text"]
 
-        # Chemin Claude (actuellement inactif : MODEL="kimi-k3" ci-dessus).
+        # Chemin Claude (actuellement inactif : MODEL="kimi-k3.1-pro" ci-dessus).
         # Porte a l'identique de callClaude cote Node pour parite si le
         # modele est change, mais pas exerce en production aujourd'hui.
         thinking_buf, text_buf = "", ""
