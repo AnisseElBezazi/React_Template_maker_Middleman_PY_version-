@@ -42,7 +42,7 @@ export default function JinjaPage() {
             <div className="sheet-head">
               <div>
                 <h2>Remplissage Jinja</h2>
-                <p>Un CV entre, un Docx rempli en sort (via Kimi K3).</p>
+                <p>Un CV entre, un Docx rempli en sort (via Kimi K3.1 Pro).</p>
               </div>
             </div>
 

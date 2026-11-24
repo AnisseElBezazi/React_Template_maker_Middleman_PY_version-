@@ -36,7 +36,7 @@ function RunningView({ run, runId }) {
             <div className="sheet-head">
               <div>
                 <h2>Génération en cours</h2>
-                <p>{isJinja ? "3 passes, via Kimi K3. Tu peux laisser cet onglet ouvert."
+                <p>{isJinja ? "3 passes, via Kimi K3.1 Pro. Tu peux laisser cet onglet ouvert."
                             : "5 passes, dont des appels au modèle. Tu peux laisser cet onglet ouvert."}</p>
               </div>
             </div>
