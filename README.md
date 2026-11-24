@@ -22,6 +22,20 @@ on dépose le gabarit, un modèle de langage multimodal le reconstruit, se compa
 Le résultat est un composant `<Nom>TemplateHtml({ cvData, assets })` qui réutilise le moteur de pagination du produit
 (`PaginatedEntryPages`, `splitEntryIntoFragments`) et un export zip au format attendu par l'application cible.
 
+## Sommaire
+
+- [Fonctionnalités](#fonctionnalités)
+- [Comment ça marche](#comment-ça-marche)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Lancer le projet](#lancer-le-projet)
+- [Architecture](#architecture)
+- [Pipeline PDF → React](#pipeline-pdf--react)
+- [Pipeline DOCX → Jinja](#pipeline-docx--jinja)
+- [Éditeur visuel et chat](#éditeur-visuel-et-chat)
+- [API](#api)
+- [Conventions](#conventions)
+
 ## Fonctionnalités
 
 - **PDF → React** : extraction du PDF, génération du JSX en plusieurs passes, auto-correction visuelle, correction d'échelle et de tailles.
