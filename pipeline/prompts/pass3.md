@@ -1,4 +1,4 @@
-Audit de câblage sur ce composant JSX -- aucun changement visuel, uniquement structurel :
+Audit de câblage sur ce composant JSX -- aucun changement visuel, uniquement structurel (sauf un point [debordement-page] : il impose de restructurer la page concernée pour que son contenu pagine, sans changer le style) :
 
 {{JSX}}
 

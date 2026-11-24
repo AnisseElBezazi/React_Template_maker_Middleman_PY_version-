@@ -17,13 +17,6 @@ def audit_jsx(code: str) -> list[dict]:
     def add(rule, message):
         findings.append({"rule": rule, "message": message})
 
-    root_match = re.search(r'<div[^>]*ref=\{rootRef\}[^>]*className="([^"]*)"', code)
-    if root_match and re.search(r"\bmax-w-", root_match.group(1)):
-        cls = re.search(r"max-w-[^\s\"]*", root_match.group(1)).group(0)
-        add("max-width-racine",
-            f'Le conteneur racine porte une classe max-w-* ("{cls}") : elle plafonne la largeur '
-            f"mesuree et retrecit tout le rendu. Remplace-la par w-full.")
-
     for field in GROUPED:
         if re.search(rf"data-block-id=\{{?`?{field}-\$?\{{?\d", code):
             add("block-id-granularite",
@@ -49,3 +42,19 @@ def audit_jsx(code: str) -> list[dict]:
         add("champ-invente", "saleInfo n'expose que email et phone_number : first_name / last_name n'existent pas.")
 
     return findings
+
+
+def overflow_findings(overflow: list[dict]) -> list[dict]:
+    """Constats MESURES au rendu (render_service.OVERFLOW_JS) : une page dont le
+    texte sort du cadre. Meme format que audit_jsx, pour la passe 3."""
+    return [{
+        "rule": "debordement-page",
+        "message": (
+            f"La page {item['page']} du rendu DEBORDE de {item['over']}px sous son cadre "
+            f"(premier texte concerne : \"{item['sample']}\"). Une couverture ou une premiere page ne doit "
+            f"jamais contenir une liste de longueur variable dans un bloc a hauteur fixe : passe son contenu "
+            f"par PaginatedEntryPages (un item par bloc ou par entree, renderPageChrome avec un compteur de "
+            f"pages pour l'habillage de la page 1) afin que l'exces passe sur la page suivante "
+            f"au lieu de sortir de la page ou d'etre coupe."
+        ),
+    } for item in overflow]

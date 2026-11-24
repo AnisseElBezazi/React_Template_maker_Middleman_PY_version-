@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { useSelector } from 'react-redux'
 import { splitEntryIntoFragments } from '@/components/CvSmart/templates/engine/entryFragments'
 import { PaginatedEntryPages } from '@/components/CvSmart/templates/engine/PaginatedEntryPages'
+import { usePaginatedGroups } from '@/components/CvSmart/templates/engine/usePaginatedGroups'
 import coverBg from '@/images/cv-templates/visian/cover-bg.png'
 import innerBg from '@/images/cv-templates/visian/inner-bg.png'
 import '@/components/CvSmart/templates/visianSmartCv.css'
@@ -13,13 +14,15 @@ const COVER_BAND_RATIO = `1263 / ${COVER_BAND_PX}`
 const COVER_CONTENT_TOP_PX = COVER_BAND_PX + 0.02 * CANVAS_W
 const COVER_CONTENT_TOP_PCT = `${(COVER_CONTENT_TOP_PX / CANVAS_W * 100).toFixed(2)}%`
 const COVER_CONTENT_BOTTOM_PX = CANVAS_H - 828 + 25
-const COVER_CONTENT_BOTTOM_PCT = `${(COVER_CONTENT_BOTTOM_PX / CANVAS_W * 100).toFixed(2)}%`
+const COVER_CONTENT_HEIGHT_RATIO = (CANVAS_H - COVER_CONTENT_TOP_PX - COVER_CONTENT_BOTTOM_PX) / CANVAS_W
 const INNER_BAND_PX = 155
 const INNER_BAND_RATIO = `1263 / ${INNER_BAND_PX}`
 const CONTENT_SIDE_PADDING_RATIO = 0.08
 const CONTENT_TOP_MARGIN_PX = 20
 const CONTENT_BOTTOM_MARGIN_PX = 90
 const INNER_CONTENT_HEIGHT_RATIO = (CANVAS_H - INNER_BAND_PX - CONTENT_TOP_MARGIN_PX - CONTENT_BOTTOM_MARGIN_PX) / CANVAS_W
+// Gouttière entre les deux colonnes de la couverture (gap-6 = 1.5rem = 24px).
+const COVER_COLUMNS_GAP_PX = 24
 
 function SkillGroup({ title, categories, blockId }) {
   if (!categories?.length)
@@ -204,6 +207,65 @@ function VisianInnerPageChrome({ personalInformation, children }) {
   )
 }
 
+// Chrome de la page 1 : bandeau d'identité + pied de page fixes, contenu en flux.
+function VisianCoverPageChrome({ personalInformation, children }) {
+  return (
+    <div className="visian-smart-page" style={{ backgroundImage: `url(${coverBg})` }}>
+      <CoverHeader personalInformation={personalInformation} />
+      <PageFooter />
+      <div className="px-[6%]" style={{ paddingTop: COVER_CONTENT_TOP_PCT }}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+// Couverture à DEUX COLONNES qui pagine : chaque colonne est découpée en pages
+// par le moteur (usePaginatedGroups, un appel par colonne), puis la page k
+// affiche le groupe k de gauche à côté du groupe k de droite : ce qui ne tient
+// pas sur la page 1 passe sur la suivante au lieu d'être coupé ou de sortir de
+// la page.
+// Un item par bloc indivisible ; le titre de colonne est porté par le 1er item.
+function PaginatedCoverColumns({ containerWidth, leftItems, rightItems, pageContentHeightPx, renderPageChrome }) {
+  const left = usePaginatedGroups({ items: leftItems, containerWidth, pageContentHeightPx })
+  const right = usePaginatedGroups({ items: rightItems, containerWidth, pageContentHeightPx })
+  // Largeur de mesure volontairement un peu étroite (marges de 8 % des pages
+  // intérieures) : on mesure au pire cas, jamais plus large que le rendu.
+  const columnWidthPx = containerWidth ? (containerWidth * (1 - 2 * CONTENT_SIDE_PADDING_RATIO) - COVER_COLUMNS_GAP_PX) / 2 : 0
+  const pageCount = Math.max(left.groups?.length ?? 0, right.groups?.length ?? 0)
+
+  const renderColumn = (items, indexes) => (indexes ?? []).map(index => <div key={items[index].key}>{items[index].render()}</div>)
+  const measureColumn = (items, itemsRef) => (
+    <div style={{ position: 'fixed', top: 0, left: -99999, width: columnWidthPx }} aria-hidden="true">
+      {items.map((item, index) => (
+        <div key={item.key} ref={(el) => { itemsRef.current[index] = el }} style={{ display: 'flow-root' }}>
+          {item.render()}
+        </div>
+      ))}
+    </div>
+  )
+
+  return (
+    <>
+      {measureColumn(leftItems, left.itemsRef)}
+      {measureColumn(rightItems, right.itemsRef)}
+      {Array.from({ length: pageCount }, (_, pageIndex) => (
+        <div key={pageIndex}>
+          {renderPageChrome({
+            pageIndex,
+            children: (
+              <div className="flex gap-6">
+                <div className="w-1/2">{renderColumn(leftItems, left.groups?.[pageIndex])}</div>
+                <div className="w-1/2">{renderColumn(rightItems, right.groups?.[pageIndex])}</div>
+              </div>
+            ),
+          })}
+        </div>
+      ))}
+    </>
+  )
+}
+
 function VisianTemplateHtml({ cvData }) {
   const rootRef = useRef(null)
   const [containerWidth, setContainerWidth] = useState(null)
@@ -221,6 +283,8 @@ function VisianTemplateHtml({ cvData }) {
 
   const innerHeadingClassName = 'visian-smart-heading mb-2 text-[0.78em] font-bold tracking-wide text-gray-900 uppercase'
   const pageContentHeightPx = containerWidth ? containerWidth * INNER_CONTENT_HEIGHT_RATIO : 0
+  // Budget unique pour la couverture ET ses pages de suite : on prend le plus petit.
+  const coverContentHeightPx = containerWidth ? containerWidth * Math.min(COVER_CONTENT_HEIGHT_RATIO, INNER_CONTENT_HEIGHT_RATIO) : 0
 
   const personalInformation = cvData?.personal_information ?? {}
   const technicalSkills = cvData?.technical_skills ?? []
@@ -233,6 +297,71 @@ function VisianTemplateHtml({ cvData }) {
     .slice(0, 4)
     .map(experience => ({ ...experience, description: (experience.description ?? []).slice(0, 3) }))
   const personalProjects = cvData?.personal_projects ?? []
+
+  // Couverture : un item par bloc indivisible, pour que chaque colonne puisse
+  // continuer sur la page suivante (voir PaginatedCoverColumns).
+  const columnHeadingClassName = 'visian-smart-heading mb-2 text-[0.78em] font-bold tracking-wide uppercase'
+  const summaryItems = experiencesSummary.map((experience, index) => ({
+    key: `summary-${index}-${experience.company}`,
+    render: () => (
+      <>
+        {index === 0 && (
+          <p className={`${columnHeadingClassName} text-gray-900`}>
+            Aperçu des
+            {' '}
+            <span className="text-orange-600">expériences significatives</span>
+          </p>
+        )}
+        <ExperienceEntry experience={experience} variant="summary" blockId={`experiences_summary-${index}`} />
+      </>
+    ),
+  }))
+  const skillsBlocks = [
+    technicalSkills.length > 0 && {
+      key: 'technical_skills',
+      render: () => <SkillGroup title="Techniques" categories={technicalSkills} blockId="technical_skills" />,
+    },
+    functionalSkills.length > 0 && {
+      key: 'functional_skills',
+      render: () => <SkillGroup title="Fonctionnelles" categories={functionalSkills} blockId="functional_skills" />,
+    },
+    languages.length > 0 && {
+      key: 'languages',
+      render: () => (
+        <p className="mb-2 text-[0.68em] text-gray-700">
+          <span className="font-bold">Langues : </span>
+          {languages.map(language => `${language.name} ${language.content}`).join(', ')}
+        </p>
+      ),
+    },
+    formations.length > 0 && {
+      key: 'formations',
+      render: () => (
+        <div data-block-type="formation" data-block-id="formations">
+          <p className="visian-smart-heading text-[0.72em] font-bold tracking-wide text-gray-900">Formation</p>
+          <ul className="space-y-0.5 text-[0.68em] text-gray-700">
+            {formations.map(formation => (
+              <li key={`${formation.name}-${formation.school}`}>
+                {formation.school && `${formation.school} : `}
+                {formation.name}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ),
+    },
+  ].filter(Boolean)
+  const skillsItems = skillsBlocks.map((block, index) => (index === 0
+    ? {
+        ...block,
+        render: () => (
+          <>
+            <p className={`${columnHeadingClassName} text-orange-600`}>Compétences</p>
+            {block.render()}
+          </>
+        ),
+      }
+    : block))
 
   const entryRenderers = {
     renderHeader: props => <EntryHeaderLines {...props} />,
@@ -271,54 +400,17 @@ function VisianTemplateHtml({ cvData }) {
   return (
     <div ref={rootRef} className="mx-auto flex max-w-xl flex-col gap-6" style={{ fontSize: containerWidth ? `${(containerWidth * (20 / CANVAS_W)).toFixed(2)}px` : '20px' }}>
 
-      <div className="visian-smart-page" style={{ backgroundImage: `url(${coverBg})` }}>
-        <CoverHeader personalInformation={personalInformation} />
-        <PageFooter />
-
-        <div
-          className="flex gap-6 overflow-hidden px-[6%]"
-          style={{
-            paddingTop: COVER_CONTENT_TOP_PCT,
-            paddingBottom: COVER_CONTENT_BOTTOM_PCT,
-            maxHeight: containerWidth ? `${containerWidth * (CANVAS_H - COVER_CONTENT_BOTTOM_PX) / CANVAS_W}px` : undefined,
-          }}
-        >
-          <div className="w-1/2">
-            <p className="visian-smart-heading mb-2 text-[0.78em] font-bold tracking-wide text-gray-900 uppercase">
-              Aperçu des
-              {' '}
-              <span className="text-orange-600">expériences significatives</span>
-            </p>
-            {experiencesSummary.map((experience, index) => (
-              <ExperienceEntry key={`${experience.company}-${experience.period}`} experience={experience} variant="summary" blockId={`experiences_summary-${index}`} />
-            ))}
-          </div>
-          <div className="w-1/2">
-            <p className="visian-smart-heading mb-2 text-[0.78em] font-bold tracking-wide text-orange-600 uppercase">Compétences</p>
-            <SkillGroup title="Techniques" categories={technicalSkills} blockId="technical_skills" />
-            <SkillGroup title="Fonctionnelles" categories={functionalSkills} blockId="functional_skills" />
-            {languages.length > 0 && (
-              <p className="mb-2 text-[0.68em] text-gray-700">
-                <span className="font-bold">Langues : </span>
-                {languages.map(language => `${language.name} ${language.content}`).join(', ')}
-              </p>
-            )}
-            {formations.length > 0 && (
-              <div data-block-type="formation" data-block-id="formations">
-                <p className="visian-smart-heading text-[0.72em] font-bold tracking-wide text-gray-900">Formation</p>
-                <ul className="space-y-0.5 text-[0.68em] text-gray-700">
-                  {formations.map(formation => (
-                    <li key={`${formation.name}-${formation.school}`}>
-                      {formation.school && `${formation.school} : `}
-                      {formation.name}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+      {containerWidth && (summaryItems.length > 0 || skillsItems.length > 0) && (
+        <PaginatedCoverColumns
+          containerWidth={containerWidth}
+          leftItems={summaryItems}
+          rightItems={skillsItems}
+          pageContentHeightPx={coverContentHeightPx}
+          renderPageChrome={({ pageIndex, children }) => (pageIndex === 0
+            ? <VisianCoverPageChrome personalInformation={personalInformation}>{children}</VisianCoverPageChrome>
+            : <VisianInnerPageChrome personalInformation={personalInformation}>{children}</VisianInnerPageChrome>)}
+        />
+      )}
 
       {containerWidth && experienceItems.length > 0 && (
         <PaginatedEntryPages

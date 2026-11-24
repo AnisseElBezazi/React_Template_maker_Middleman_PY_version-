@@ -109,6 +109,30 @@ MARK_PAGES_JS = """() => {
 }"""
 
 
+# Texte qui sort du bas de sa page (contenu de longueur variable pose dans un
+# bloc a hauteur fixe, typiquement une couverture) : il deborde sous le cadre,
+# ou est coupe par un overflow-hidden, au lieu de passer sur la page suivante.
+# On mesure les NOEUDS TEXTE (pas les boites) : une decoration qui depasse
+# volontairement du cadre ne doit pas compter.
+OVERFLOW_JS = """() => {
+  const out = [];
+  for (const page of document.querySelectorAll('[data-cv-page]')) {
+    const bottom = page.getBoundingClientRect().bottom;
+    let worst = 0, sample = '';
+    const walker = document.createTreeWalker(page, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!node.textContent.trim()) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const r = range.getBoundingClientRect();
+      if (r.height > 0 && r.bottom - bottom > worst) { worst = r.bottom - bottom; sample = node.textContent.trim().slice(0, 60); }
+    }
+    if (worst > 4) out.push({ page: Number(page.getAttribute('data-cv-page')), over: Math.round(worst), sample });
+  }
+  return out;
+}"""
+
+
 def render(jsx_path: Path, data_path: Path, out_png: Path, width: int = 1240,
            height: int = 1754, bg_fallback: Path | None = None) -> dict:
     """Compile, monte et capture. Renvoie les chemins produits, le nombre de
@@ -123,6 +147,7 @@ def render(jsx_path: Path, data_path: Path, out_png: Path, width: int = 1240,
 
     errors: list[str] = []
     page_paths: list[Path] = []
+    overflow: list[dict] = []
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
@@ -136,6 +161,7 @@ def render(jsx_path: Path, data_path: Path, out_png: Path, width: int = 1240,
             page.locator("#root").screenshot(path=str(out_png))
 
             page_count = page.evaluate(MARK_PAGES_JS)
+            overflow = page.evaluate(OVERFLOW_JS)
             for i in range(1, page_count + 1):
                 element = page.locator(f'[data-cv-page="{i}"]')
                 if element.count() == 0:
@@ -152,5 +178,6 @@ def render(jsx_path: Path, data_path: Path, out_png: Path, width: int = 1240,
         "page_count": len(page_paths),
         "page_paths": page_paths,
         "errors": errors,
+        "overflow": overflow,
         "tailwind_error": tailwind_error,
     }

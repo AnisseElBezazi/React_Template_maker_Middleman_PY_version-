@@ -10,7 +10,7 @@ from typing import Callable
 from cvsmart.shared.paths_service import NODE_TOOLS_ROOT, PIPELINE_SAMPLE_CVDATA
 from cvsmart.shared.errors import RunCancelled
 from cvsmart.jsx.services.sample_data_service import generate_sample_cv_data
-from cvsmart.jsx.services.audit_service import audit_jsx
+from cvsmart.jsx.services.audit_service import audit_jsx, overflow_findings
 from cvsmart.jsx.services.text_safety_service import add_text_safety
 from cvsmart.rendering.services.render_service import render as render_component
 from cvsmart.rendering.services.grid_service import add_grid_overlay
@@ -215,10 +215,13 @@ def run_pipeline(
 
     client = ModelClient(api_key=api_key, on_progress=on_progress, on_stream=on_stream, should_cancel=should_cancel)
 
+    last_overflow: list[dict] = []
+
     def render(jsx_path: Path, png_out_path: Path) -> list[Path]:
         result = render_component(jsx_path, cv_data_path, png_out_path, width, height)
         if result["errors"]:
             on_progress("render", f"Avertissement -- erreurs JS dans le composant rendu: {result['errors']}")
+        last_overflow[:] = result["overflow"]
         return result["page_paths"]
 
     passes = []
@@ -367,7 +370,7 @@ def run_pipeline(
     # --- Passe 3 : audit de câblage ---
     # Un controle algorithmique passe d'abord : s'il ne trouve rien, la
     # passe modele est purement et simplement sautee.
-    findings = audit_jsx(jsx2)
+    findings = audit_jsx(jsx2) + overflow_findings(last_overflow)
     jsx3_path = out_dir / "attempt3.jsx"
     png3_path = out_dir / "attempt3.png"
     jsx3 = jsx2
@@ -391,6 +394,8 @@ def run_pipeline(
         place_extracted_images(jsx3, out_dir)
         on_progress("pass3", "Rendu de la tentative 3...")
         render(jsx3_path, png3_path)
+        for item in last_overflow:
+            on_progress("pass3", f"Avertissement : la page {item['page']} déborde encore de {item['over']}px après la passe 3.")
     passes.append({"name": "pass3", "label": "Passe 3 -- audit", "jsx_path": jsx3_path, "png_path": png3_path,
                     "html_path": png3_path.with_suffix(".html")})
     on_progress("pass3", "OK")
