@@ -80,7 +80,11 @@ def build_html(jsx_path: Path, bundle: str) -> tuple[str, str | None]:
     html = (
         '<!doctype html><html><head><meta charset="utf-8">'
         f'<meta name="cv-tags" content="{CV_TAGS_VERSION}">'
-        f'<style>html,body{{margin:0;padding:0;}}{tailwind_css}\n{shared_css}</style>'
+        # Le garde-fou `max-w-xl` de la racine (voir ensure_root_max_width) est
+        # fait pour Middleman : ici il rendrait le composant a 576px au centre
+        # d'un canvas de 1240px, et l'apercu comme les mesures de taille
+        # (dictionnaire vs rendu) seraient faux. Le JSX exporte le garde.
+        f'<style>html,body{{margin:0;padding:0;}}#root>*{{max-width:none;}}{tailwind_css}\n{shared_css}</style>'
         f'</head><body><div id="root"></div><script>{bundle}</script></body></html>'
     )
     return html, tailwind_error
